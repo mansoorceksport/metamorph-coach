@@ -15,4 +15,17 @@
   --color-green-800: #016538;
   --color-green-900: #0A5331;
   --color-green-950: #052E16;
+
+  /* Cobalt Palette */
+  --color-cobalt-50: #F0F5FF;
+  --color-cobalt-100: #E0EBFF;
+  --color-cobalt-200: #C2D6FF;
+  --color-cobalt-300: #94B8FF;
+  --color-cobalt-400: #5C91FF;
+  --color-cobalt-500: #2E66FF;
+  --color-cobalt-600: #0047FF;
+  --color-cobalt-700: #0037CC;
+  --color-cobalt-800: #002B99;
+  --color-cobalt-900: #002073;
+  --color-cobalt-950: #001242;
 }
