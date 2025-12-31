@@ -1,0 +1,391 @@
+openapi: 3.0.3
+info:
+  title: Metamorph API
+  description: API for Metamorph Fitness Platform (SaaS)
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+    description: Local Development
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Exercise:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        muscle_group:
+          type: string
+        equipment:
+          type: string
+        video_url:
+          type: string
+
+    WorkoutTemplate:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        gender:
+          type: string
+          enum: [Male, Female, All]
+        exercise_ids:
+          type: array
+          items:
+            type: string
+
+    WorkoutSession:
+      type: object
+      properties:
+        id:
+          type: string
+        schedule_id:
+          type: string
+        coach_id:
+          type: string
+        member_id:
+          type: string
+        planned_exercises:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlannedExercise"
+
+    PlannedExercise:
+      type: object
+      properties:
+        exercise_id:
+          type: string
+        name:
+          type: string
+        sets:
+          type: array
+          items:
+            $ref: "#/components/schemas/SetLog"
+
+    SetLog:
+      type: object
+      properties:
+        set_index:
+          type: integer
+        weight:
+          type: number
+        reps:
+          type: integer
+        remarks:
+          type: string
+        completed:
+          type: boolean
+
+security:
+  - bearerAuth: []
+
+paths:
+  # =======================
+  # AUTH
+  # =======================
+  /v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: Login or Register via Firebase Token
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id_token: { type: string }
+      responses:
+        200:
+          description: OK
+
+  # =======================
+  # EXERCISES & TEMPLATES
+  # =======================
+  /v1/exercises:
+    get:
+      tags: [Exercises]
+      summary: Search Exercises
+      parameters:
+        - name: name
+          in: query
+          schema:
+            type: string
+      responses:
+        200:
+          description: List of exercises
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Exercise"
+    post:
+      tags: [Exercises]
+      summary: Create Exercise (Admin)
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Exercise"
+      responses:
+        201:
+          description: Created
+
+  /v1/exercises/{id}:
+    put:
+      tags: [Exercises]
+      summary: Update Exercise (Admin)
+    delete:
+      tags: [Exercises]
+      summary: Delete Exercise (Admin)
+
+  /v1/templates:
+    get:
+      tags: [Templates]
+      summary: List Templates
+      responses:
+        200:
+          description: List of templates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WorkoutTemplate"
+    post:
+      tags: [Templates]
+      summary: Create Template (Admin)
+
+  /v1/templates/{id}:
+    put:
+      tags: [Templates]
+      summary: Update Template
+    delete:
+      tags: [Templates]
+      summary: Delete Template
+
+  # =======================
+  # PRO (Coach)
+  # =======================
+  /v1/pro/clients:
+    get:
+      tags: [Pro]
+      summary: Get Assigned Clients
+
+  /v1/pro/clients/{id}/history:
+    get:
+      tags: [Pro]
+      summary: Get Client History
+
+  /v1/pro/schedules:
+    post:
+      tags: [Scheduling]
+      summary: Create Schedule
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                contract_id: { type: string }
+                start_time: { type: string, format: date-time }
+                end_time: { type: string, format: date-time }
+
+  /v1/pro/schedules/{id}/complete:
+    post:
+      tags: [Scheduling]
+      summary: Complete Session (Deduct Credit)
+
+  # WORKOUT SESSION ENGINE
+  /v1/pro/sessions/initialize:
+    post:
+      tags: [WorkoutSession]
+      summary: Initialize Session from Template
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                schedule_id: { type: string }
+                template_id: { type: string }
+      responses:
+        201:
+          description: Session Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkoutSession"
+
+  /v1/pro/sessions/{id}/exercises:
+    patch:
+      tags: [WorkoutSession]
+      summary: Add/Remove Exercises
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action: { type: string, enum: [add, remove] }
+                exercise_id: { type: string }
+                index: { type: integer }
+
+  /v1/pro/sessions/{id}/log:
+    patch:
+      tags: [WorkoutSession]
+      summary: Log Set Results
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                exercise_index: { type: integer }
+                set_index: { type: integer }
+                weight: { type: number }
+                reps: { type: integer }
+                remarks: { type: string }
+      responses:
+        200:
+          description: Logged
+
+  # =======================
+  # MEMBER
+  # =======================
+  /v1/me/scans/digitize:
+    post:
+      tags: [Member]
+      summary: Upload InBody Image
+
+  /v1/me/scans:
+    get:
+      tags: [Member]
+      summary: List Scans
+
+  /v1/me/scans/{id}:
+    get:
+      tags: [Member]
+      summary: Get Scan
+    patch:
+      tags: [Member]
+      summary: Update Scan
+    delete:
+      tags: [Member]
+      summary: Delete Scan
+
+  /v1/me/analytics/history:
+    get:
+      tags: [Member]
+      summary: Get History Charts
+
+  /v1/me/analytics/recap:
+    get:
+      tags: [Member]
+      summary: Get Recap
+
+  /v1/me/join-tenant:
+    post:
+      tags: [Member]
+      summary: Join Tenant via Code
+
+  /v1/me/contracts:
+    get:
+      tags: [Member]
+      summary: My Contracts
+
+  # =======================
+  # SCHEDULES & CONTRACTS (Shared)
+  # =======================
+  /v1/schedules:
+    get:
+      tags: [Scheduling]
+      summary: List Schedules (Filtered)
+
+  /v1/schedules/{id}:
+    get:
+      tags: [Scheduling]
+      summary: Get Schedule
+
+  /v1/schedules/{id}/reschedule:
+    patch:
+      tags: [Scheduling]
+      summary: Reschedule Session
+
+  /v1/contracts/{id}:
+    get:
+      tags: [Contracts]
+      summary: Get Contract Details
+
+  # =======================
+  # TENANT ADMIN
+  # =======================
+  /v1/tenant-admin/users:
+    get: { tags: [TenantAdmin] }
+    post: { tags: [TenantAdmin] }
+  /v1/tenant-admin/users/{id}:
+    get: { tags: [TenantAdmin] }
+    put: { tags: [TenantAdmin] }
+    delete: { tags: [TenantAdmin] }
+
+  /v1/tenant-admin/coaches:
+    get: { tags: [TenantAdmin] }
+    post: { tags: [TenantAdmin] }
+  /v1/tenant-admin/coaches/{id}:
+    get: { tags: [TenantAdmin] }
+    put: { tags: [TenantAdmin] }
+    delete: { tags: [TenantAdmin] }
+
+  /v1/tenant-admin/branches:
+    post: { tags: [TenantAdmin] }
+    get: { tags: [TenantAdmin] }
+  /v1/tenant-admin/branches/{id}:
+    get: { tags: [TenantAdmin] }
+    put: { tags: [TenantAdmin] }
+    delete: { tags: [TenantAdmin] }
+
+  /v1/tenant-admin/packages:
+    post: { tags: [TenantAdmin] }
+    get: { tags: [TenantAdmin] }
+  /v1/tenant-admin/packages/{id}:
+    get: { tags: [TenantAdmin] }
+    put: { tags: [TenantAdmin] }
+
+  /v1/tenant-admin/contracts:
+    post: { tags: [TenantAdmin] }
+    get: { tags: [TenantAdmin] }
+
+  # =======================
+  # PLATFORM (Super Admin)
+  # =======================
+  /v1/platform/tenants:
+    post: { tags: [Platform] }
+  /v1/platform/tenants/{id}:
+    get: { tags: [Platform] }
+    put: { tags: [Platform] }
+
+  /v1/platform/tenant-admins:
+    post: { tags: [Platform] }
+    get: { tags: [Platform] }
+  /v1/platform/tenant-admins/{id}:
+    get: { tags: [Platform] }
+    put: { tags: [Platform] }
+    delete: { tags: [Platform] }
+
+  /v1/platform/branches:
+    post: { tags: [Platform] }
+    get: { tags: [Platform] }
+  /v1/platform/branches/{id}:
+    get: { tags: [Platform] }
+    put: { tags: [Platform] }
+    delete: { tags: [Platform] }

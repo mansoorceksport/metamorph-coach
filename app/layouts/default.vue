@@ -1,4 +1,7 @@
 <script setup lang="ts">
+const { signOut } = useAuth()
+const toast = useToast()
+
 const navItems = [
   {
     label: 'Agenda',
@@ -16,6 +19,24 @@ const navItems = [
     icon: 'i-heroicons-book-open'
   }
 ]
+
+const handleLogout = async () => {
+  try {
+    await signOut()
+    await navigateTo('/login')
+    toast.add({ 
+      title: 'Logged out successfully', 
+      color: 'success',
+      icon: 'i-heroicons-check-circle'
+    })
+  } catch (error: any) {
+    toast.add({ 
+      title: 'Logout failed', 
+      description: error.message, 
+      color: 'error' 
+    })
+  }
+}
 </script>
 
 <template>
@@ -32,6 +53,7 @@ const navItems = [
           variant="ghost"
           label="Logout"
           icon="i-heroicons-arrow-right-on-rectangle"
+          @click="handleLogout"
         />
       </div>
     </header>

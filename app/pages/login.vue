@@ -10,6 +10,7 @@ const router = useRouter()
 // Redirect if already authenticated
 watchEffect(() => {
   if (isAuthenticated.value) {
+    console.log("am i running?")
     router.push('/')
   }
 })
@@ -23,6 +24,9 @@ const handleGoogleSignIn = async () => {
       color: 'success',
       icon: 'i-heroicons-check-circle'
     })
+    
+    // Explicit redirect to ensure navigation occurs
+    await router.push('/')
   } catch (err: any) {
     toast.add({
       title: 'Sign In Failed',
@@ -91,17 +95,19 @@ const handleGoogleSignIn = async () => {
           />
 
           <!-- Sign In Button -->
+          <!-- Sign In Button -->
           <UButton
             @click="handleGoogleSignIn"
             :loading="loading"
             :disabled="loading"
-            color="primary"
+            color="neutral"
+            variant="solid"
             size="xl"
             block
-            class="font-semibold"
+            class="font-bold bg-white hover:bg-gray-100 text-slate-900"
           >
             <template #leading>
-              <UIcon name="i-simple-icons-google" class="w-5 h-5" />
+              <UIcon name="i-simple-icons-google" class="w-5 h-5 text-slate-900" />
             </template>
             {{ loading ? 'Signing in...' : 'Sign in with Google' }}
           </UButton>
