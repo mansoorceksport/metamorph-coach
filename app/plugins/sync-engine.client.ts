@@ -3,17 +3,14 @@
  * Handles offline-first synchronization with automatic retry
  * 
  * Features:
- * - Connectivity listener for immediate queue flush
- * - FIFO queue processing
- * - Exponential backoff for retries
+ * - Connectivity listener for immediate queue processing
+ * - FIFO queue processing with exponential backoff
+ * - X-Correlation-ID header injection for idempotency
  * - Global sync state for UI feedback
  */
-import { db } from '~/utils/db'
 
 // Max retry attempts before giving up on an item
 const MAX_RETRIES = 5
-// Base delay for exponential backoff (ms)
-const BASE_RETRY_DELAY = 1000
 // Heartbeat interval for checking queue (ms)
 const HEARTBEAT_INTERVAL = 30000
 
@@ -21,7 +18,15 @@ export default defineNuxtPlugin(async (nuxtApp) => {
     // Only run on client
     if (!import.meta.client) return
 
-    const { isSyncing, pendingSyncCount, isOnline, refreshPendingCount } = useDatabase()
+    const {
+        isSyncing,
+        pendingSyncCount,
+        isOnline,
+        refreshPendingCount,
+        processSyncQueue, // Use the idempotent sync worker
+        getPendingSyncItems,
+        getDeadLetterItems
+    } = useDatabase()
 
     let isProcessing = false
     let heartbeatTimer: ReturnType<typeof setInterval> | null = null
@@ -48,7 +53,7 @@ export default defineNuxtPlugin(async (nuxtApp) => {
     isOnline.value = navigator.onLine
 
     // ============================================
-    // QUEUE FLUSH LOGIC
+    // QUEUE FLUSH LOGIC (Uses idempotent processor)
     // ============================================
 
     async function flushQueue(): Promise<void> {
@@ -56,83 +61,24 @@ export default defineNuxtPlugin(async (nuxtApp) => {
         if (isProcessing || !navigator.onLine) return
 
         isProcessing = true
-        isSyncing.value = true
 
         try {
-            // Get all pending items in FIFO order
-            const items = await db.syncQueue.orderBy('timestamp').toArray()
+            // Use the enhanced idempotent sync processor
+            const result = await processSyncQueue()
 
-            if (items.length === 0) {
-                isSyncing.value = false
-                isProcessing = false
-                return
+            if (result.success > 0 || result.failed > 0) {
+                console.log(`[SyncEngine] Sync completed: ${result.success} success, ${result.failed} failed`)
             }
 
-            console.log(`[SyncEngine] Processing ${items.length} queued items...`)
-
-            for (const item of items) {
-                if (!navigator.onLine) {
-                    console.log('[SyncEngine] Lost connection, stopping queue processing')
-                    break
-                }
-
-                try {
-                    // Attempt the request
-                    const response = await fetch(item.url, {
-                        method: item.method,
-                        headers: {
-                            'Content-Type': 'application/json',
-                            ...item.headers
-                        },
-                        body: item.body
-                    })
-
-                    if (response.ok) {
-                        // Success! Remove from queue
-                        console.log(`[SyncEngine] Successfully synced: ${item.method} ${item.url}`)
-                        await db.syncQueue.delete(item.id!)
-                        await refreshPendingCount()
-                    } else if (response.status >= 500) {
-                        // Server error - stop and wait for heartbeat
-                        console.warn(`[SyncEngine] Server error (${response.status}), pausing queue`)
-                        await incrementRetryCount(item.id!, `Server error: ${response.status}`)
-                        break
-                    } else if (response.status >= 400) {
-                        // Client error - likely won't succeed on retry, remove it
-                        console.error(`[SyncEngine] Client error (${response.status}), removing item`)
-                        await db.syncQueue.delete(item.id!)
-                        await refreshPendingCount()
-                    }
-                } catch (error) {
-                    // Network error - increment retry and continue
-                    console.error(`[SyncEngine] Network error:`, error)
-                    await incrementRetryCount(item.id!, String(error))
-
-                    // Check if max retries exceeded
-                    const updatedItem = await db.syncQueue.get(item.id!)
-                    if (updatedItem && updatedItem.retryCount >= MAX_RETRIES) {
-                        console.warn(`[SyncEngine] Max retries exceeded for item ${item.id}, removing`)
-                        await db.syncQueue.delete(item.id!)
-                        await refreshPendingCount()
-                    }
-
-                    // Stop processing on network error
-                    break
-                }
+            // Check for dead-letter items
+            const deadLetters = await getDeadLetterItems()
+            if (deadLetters.length > 0) {
+                console.warn(`[SyncEngine] ${deadLetters.length} items exceeded max retries (dead-letter)`)
             }
+        } catch (error) {
+            console.error('[SyncEngine] Error during sync:', error)
         } finally {
             isProcessing = false
-            isSyncing.value = false
-        }
-    }
-
-    async function incrementRetryCount(id: number, error: string): Promise<void> {
-        const item = await db.syncQueue.get(id)
-        if (item) {
-            await db.syncQueue.update(id, {
-                retryCount: item.retryCount + 1,
-                lastError: error
-            })
         }
     }
 
@@ -145,9 +91,9 @@ export default defineNuxtPlugin(async (nuxtApp) => {
 
         heartbeatTimer = setInterval(async () => {
             if (navigator.onLine && !isProcessing) {
-                const count = await db.syncQueue.count()
-                if (count > 0) {
-                    console.log(`[SyncEngine] Heartbeat: ${count} items pending, attempting flush...`)
+                const items = await getPendingSyncItems()
+                if (items.length > 0) {
+                    console.log(`[SyncEngine] Heartbeat: ${items.length} items ready for sync...`)
                     flushQueue()
                 }
             }
