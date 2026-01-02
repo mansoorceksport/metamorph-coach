@@ -20,7 +20,8 @@
     "@nuxt/ui": "^4.3.0",
     "dexie": "^4.2.1",
     "firebase": "^12.7.0",
-    "nuxt": "^4.2.2"
+    "nuxt": "^4.2.2",
+    "ulid": "^3.0.2"
   },
   "devDependencies": {
     "@nuxt/eslint": "^1.12.1",

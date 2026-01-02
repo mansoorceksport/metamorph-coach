@@ -45,7 +45,7 @@ export interface Exercise {
  * Session log entry for tracking sets with PB flags
  */
 export interface SessionLog {
-    id?: number // Auto-increment
+    id: string // ULID
     schedule_id: string
     exercise_id: string
     exercise_name: string
@@ -61,17 +61,21 @@ export interface SessionLog {
 }
 
 /**
- * Sync queue entry for offline-first failure recovery
+ * Sync queue entry for offline-first failure recovery with idempotency support
  */
 export interface SyncQueueItem {
-    id?: number // Auto-increment
+    id: string // ULID
+    correlation_id: string // Unique ID for this specific request (for X-Correlation-ID header)
+    payload_hash: string // Hash of the payload for deduplication
+    context: Record<string, any> // Metadata (member_id, schedule_id, etc.) for debugging
     method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
     url: string
     body?: string // JSON stringified
     headers?: Record<string, string>
-    timestamp: number // Unix timestamp
+    timestamp: number // Unix timestamp (when queued)
     retryCount: number
     lastError?: string
+    nextRetryAt?: number // Unix timestamp for exponential backoff
     priority: 'high' | 'normal' | 'low'
 }
 
@@ -95,7 +99,7 @@ export interface CachedMember {
  * Planned exercise for a session (workout plan)
  */
 export interface PlannedExercise {
-    id?: number // Auto-increment
+    id: string // ULID
     schedule_id: string
     exercise_id: string
     name: string
@@ -121,14 +125,14 @@ export class MetamorphDB extends Dexie {
     constructor() {
         super('MetamorphCoachDB')
 
-        this.version(2).stores({
+        this.version(5).stores({
             // Primary key and indexed fields
             schedules: 'id, member_id, start_time, status, [start_time+status]',
             exercises: 'id, name, muscle_group',
-            sessionLogs: '++id, schedule_id, exercise_id, [schedule_id+exercise_id]',
-            syncQueue: '++id, timestamp, priority, retryCount',
+            sessionLogs: 'id, schedule_id, exercise_id, [schedule_id+exercise_id]',
+            syncQueue: 'id, correlation_id, payload_hash, timestamp, priority, nextRetryAt',
             cachedMembers: 'id, name, churn_score, attendance_trend',
-            plannedExercises: '++id, schedule_id, exercise_id, [schedule_id+order]'
+            plannedExercises: 'id, schedule_id, exercise_id, [schedule_id+order]'
         })
     }
 }

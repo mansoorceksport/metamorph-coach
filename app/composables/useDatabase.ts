@@ -3,6 +3,7 @@
  * Provides reactive queries and mutations for offline-first data access
  */
 import { db, type Schedule, type SessionLog, type SyncQueueItem, type Exercise, type PlannedExercise, getTodayRange, checkIfNewPB, calculateVelocityDelta } from '~/utils/db'
+import { generateId, generateHash, calculateBackoffMs } from '~/utils/crypto'
 import { liveQuery } from 'dexie'
 
 // Global sync state (shared across all instances)
@@ -148,15 +149,17 @@ export function useDatabase() {
     /**
      * Add a planned exercise to a session
      */
-    async function addPlannedExercise(exercise: Omit<PlannedExercise, 'id'>): Promise<number> {
+    async function addPlannedExercise(exercise: Omit<PlannedExercise, 'id'>): Promise<string> {
         if (!import.meta.client) throw new Error('Client-side only')
-        return await db.plannedExercises.add(exercise) as number
+        const id = generateId()
+        await db.plannedExercises.add({ ...exercise, id })
+        return id
     }
 
     /**
      * Remove a planned exercise from a session
      */
-    async function removePlannedExercise(id: number): Promise<void> {
+    async function removePlannedExercise(id: string): Promise<void> {
         if (!import.meta.client) return
         await db.plannedExercises.delete(id)
     }
@@ -164,7 +167,7 @@ export function useDatabase() {
     /**
      * Update a planned exercise
      */
-    async function updatePlannedExercise(id: number, data: Partial<PlannedExercise>): Promise<void> {
+    async function updatePlannedExercise(id: string, data: Partial<PlannedExercise>): Promise<void> {
         if (!import.meta.client) return
         await db.plannedExercises.update(id, data)
     }
@@ -238,13 +241,6 @@ export function useDatabase() {
             }
         }
 
-        const sessionLog: SessionLog = {
-            ...log,
-            is_new_pb,
-            velocity_delta,
-            completed_at: log.completed ? new Date().toISOString() : undefined
-        }
-
         // Check if log already exists for this schedule+exercise+set
         const existing = await db.sessionLogs
             .where('[schedule_id+exercise_id]')
@@ -253,11 +249,27 @@ export function useDatabase() {
             .first()
 
         if (existing?.id) {
-            await db.sessionLogs.update(existing.id, sessionLog)
-            return { ...sessionLog, id: existing.id }
+            // Update existing log
+            const updatedLog: SessionLog = {
+                ...log,
+                id: existing.id,
+                is_new_pb,
+                velocity_delta,
+                completed_at: log.completed ? new Date().toISOString() : undefined
+            }
+            await db.sessionLogs.update(existing.id, updatedLog)
+            return updatedLog
         } else {
-            const id = await db.sessionLogs.add(sessionLog)
-            return { ...sessionLog, id: id as number }
+            // Create new log with ULID
+            const newLog: SessionLog = {
+                ...log,
+                id: generateId(),
+                is_new_pb,
+                velocity_delta,
+                completed_at: log.completed ? new Date().toISOString() : undefined
+            }
+            await db.sessionLogs.add(newLog)
+            return newLog
         }
     }
 
@@ -307,57 +319,172 @@ export function useDatabase() {
     }
 
     // ============================================
-    // SYNC QUEUE
+    // SYNC QUEUE (Idempotent with Correlation Context)
     // ============================================
 
+    const MAX_RETRY_COUNT = 5 // After this, item goes to dead-letter state
+
     /**
-     * Queue a failed API request for later sync
+     * Queue an API request for later sync with deduplication
+     * Returns null if a duplicate already exists
      */
     async function queueSync(
-        action: Omit<SyncQueueItem, 'id' | 'timestamp' | 'retryCount'>
-    ): Promise<number> {
+        action: Omit<SyncQueueItem, 'id' | 'correlation_id' | 'payload_hash' | 'timestamp' | 'retryCount' | 'nextRetryAt'>,
+        context: Record<string, any> = {}
+    ): Promise<string | null> {
         if (!import.meta.client) throw new Error('Client-side only')
 
-        const item: SyncQueueItem = {
-            ...action,
-            timestamp: Date.now(),
-            retryCount: 0
+        // Generate payload hash for deduplication
+        const payloadString = JSON.stringify({
+            method: action.method,
+            url: action.url,
+            body: action.body
+        })
+        const payloadHash = await generateHash(payloadString)
+
+        // Check for duplicates - skip if same payload already queued
+        const existing = await db.syncQueue
+            .where('payload_hash')
+            .equals(payloadHash)
+            .first()
+
+        if (existing) {
+            console.log(`[SyncQueue] Duplicate detected, skipping. Hash: ${payloadHash.slice(0, 8)}...`)
+            return null
         }
 
-        const id = await db.syncQueue.add(item)
+        const item: SyncQueueItem = {
+            id: generateId(),
+            correlation_id: generateId(), // Unique ID for X-Correlation-ID header
+            payload_hash: payloadHash,
+            context: { ...context, ...action.context },
+            method: action.method,
+            url: action.url,
+            body: action.body,
+            headers: action.headers,
+            timestamp: Date.now(),
+            retryCount: 0,
+            priority: action.priority
+        }
+
+        await db.syncQueue.add(item)
         await refreshPendingCount()
-        return id as number
+        console.log(`[SyncQueue] Queued: ${action.method} ${action.url} (correlation: ${item.correlation_id.slice(0, 8)}...)`)
+        return item.id
     }
 
     /**
-     * Get all pending sync items (oldest first)
+     * Get all pending sync items ready for retry (respecting backoff)
      */
     async function getPendingSyncItems(): Promise<SyncQueueItem[]> {
         if (!import.meta.client) return []
-        return await db.syncQueue.orderBy('timestamp').toArray()
+        const now = Date.now()
+
+        // Get items where nextRetryAt is null (new) or in the past (ready for retry)
+        const items = await db.syncQueue.orderBy('timestamp').toArray()
+        return items.filter(item => {
+            // Skip items that exceeded max retries
+            if (item.retryCount >= MAX_RETRY_COUNT) return false
+            // Include if no backoff set or backoff expired
+            return !item.nextRetryAt || item.nextRetryAt <= now
+        })
     }
 
     /**
      * Remove a sync item after successful sync
      */
-    async function removeSyncItem(id: number): Promise<void> {
+    async function removeSyncItem(id: string): Promise<void> {
         if (!import.meta.client) return
         await db.syncQueue.delete(id)
         await refreshPendingCount()
     }
 
     /**
-     * Increment retry count for a failed sync item
+     * Mark a sync item as failed with exponential backoff
      */
-    async function incrementRetryCount(id: number, error?: string): Promise<void> {
+    async function markSyncFailed(id: string, error?: string): Promise<void> {
         if (!import.meta.client) return
         const item = await db.syncQueue.get(id)
         if (item) {
+            const newRetryCount = item.retryCount + 1
+            const backoffMs = calculateBackoffMs(newRetryCount)
+            const nextRetryAt = Date.now() + backoffMs
+
             await db.syncQueue.update(id, {
-                retryCount: item.retryCount + 1,
-                lastError: error
+                retryCount: newRetryCount,
+                lastError: error,
+                nextRetryAt
             })
+
+            console.log(`[SyncQueue] Failed: ${item.url} - Retry ${newRetryCount}/${MAX_RETRY_COUNT} in ${backoffMs / 1000}s`)
         }
+    }
+
+    /**
+     * Process the sync queue with exponential backoff
+     */
+    async function processSyncQueue(): Promise<{ success: number; failed: number }> {
+        if (!import.meta.client || isSyncing.value || !isOnline.value) {
+            return { success: 0, failed: 0 }
+        }
+
+        isSyncing.value = true
+        let success = 0
+        let failed = 0
+
+        try {
+            const items = await getPendingSyncItems()
+            console.log(`[SyncQueue] Processing ${items.length} pending items`)
+
+            for (const item of items) {
+                try {
+                    // Build request with X-Correlation-ID header
+                    const headers: Record<string, string> = {
+                        'Content-Type': 'application/json',
+                        'X-Correlation-ID': item.correlation_id,
+                        ...(item.headers || {})
+                    }
+
+                    const response = await fetch(item.url, {
+                        method: item.method,
+                        headers,
+                        body: item.body
+                    })
+
+                    if (response.ok) {
+                        await removeSyncItem(item.id)
+                        success++
+                        console.log(`[SyncQueue] Success: ${item.method} ${item.url}`)
+                    } else if (response.status === 409) {
+                        // Conflict - server already has this (idempotent success)
+                        await removeSyncItem(item.id)
+                        success++
+                        console.log(`[SyncQueue] Already synced (409): ${item.url}`)
+                    } else {
+                        const errorText = await response.text()
+                        await markSyncFailed(item.id, `HTTP ${response.status}: ${errorText}`)
+                        failed++
+                    }
+                } catch (err: any) {
+                    await markSyncFailed(item.id, err.message)
+                    failed++
+                }
+            }
+        } finally {
+            isSyncing.value = false
+            await refreshPendingCount()
+        }
+
+        return { success, failed }
+    }
+
+    /**
+     * Get dead-letter items (exceeded max retries)
+     */
+    async function getDeadLetterItems(): Promise<SyncQueueItem[]> {
+        if (!import.meta.client) return []
+        const items = await db.syncQueue.toArray()
+        return items.filter(item => item.retryCount >= MAX_RETRY_COUNT)
     }
 
     /**
@@ -368,7 +495,9 @@ export function useDatabase() {
             pendingSyncCount.value = 0
             return
         }
-        pendingSyncCount.value = await db.syncQueue.count()
+        // Count only items that haven't exceeded max retries
+        const items = await db.syncQueue.toArray()
+        pendingSyncCount.value = items.filter(i => i.retryCount < MAX_RETRY_COUNT).length
     }
 
     // Initialize pending count on client
@@ -439,11 +568,13 @@ export function useDatabase() {
         updateScheduleStatus,
         saveExercise,
 
-        // Sync queue
+        // Sync queue (idempotent with correlation context)
         queueSync,
         getPendingSyncItems,
         removeSyncItem,
-        incrementRetryCount,
+        markSyncFailed,
+        processSyncQueue,
+        getDeadLetterItems,
         refreshPendingCount,
 
         // Bulk operations
