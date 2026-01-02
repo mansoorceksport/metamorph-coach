@@ -1,28 +1,55 @@
 <script setup lang="ts">
-// Mock Data for "Today's Schedule"
-const todaysSessions = [
-  {
-    id: 's1',
-    time: '09:00 AM',
-    clientName: 'Sarah Jenkins',
-    type: 'Hypertrophy Focus',
-    status: 'upcoming'
-  },
-  {
-    id: 's2',
-    time: '14:00 PM',
-    clientName: 'Mike Ross',
-    type: 'Metabolic Conditioning',
-    status: 'upcoming'
-  },
-  {
-    id: 's3',
-    time: '16:30 PM',
-    clientName: 'Jessica Pearson',
-    type: 'Recovery & Mobility',
-    status: 'upcoming'
+import { db } from '~/utils/db'
+
+// Load schedules from IndexedDB
+const todaysSessions = ref<Array<{
+  id: string
+  time: string
+  clientName: string
+  type: string
+  status: string
+}>>([])
+
+const isLoadingSchedules = ref(true)
+
+onMounted(async () => {
+  if (!import.meta.client) return
+  
+  try {
+    // Load schedules from Dexie
+    const allSchedules = await db.schedules.toArray()
+    
+    // Get today's date (start and end of day)
+    const today = new Date()
+    const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+    const endOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1)
+    
+    // Filter to only today's schedules
+    const todaysSchedules = allSchedules.filter(schedule => {
+      const scheduleDate = new Date(schedule.start_time)
+      return scheduleDate >= startOfToday && scheduleDate < endOfToday
+    })
+    
+    // Transform to display format
+    todaysSessions.value = todaysSchedules.map(schedule => ({
+      id: schedule.id,
+      time: new Date(schedule.start_time).toLocaleTimeString('en-US', { 
+        hour: '2-digit', 
+        minute: '2-digit',
+        hour12: true 
+      }),
+      clientName: schedule.member_name,
+      type: schedule.session_goal || 'Training Session',
+      status: schedule.status
+    }))
+    
+    console.log(`[CommandCenter] Found ${todaysSchedules.length} sessions for today (${startOfToday.toDateString()})`)
+  } catch (error) {
+    console.error('[CommandCenter] Failed to load schedules:', error)
+  } finally {
+    isLoadingSchedules.value = false
   }
-]
+})
 
 // Mock Data for Analytics
 const risingStars = [
@@ -119,31 +146,99 @@ const mockRecentPRs = [
     <!-- Today's Schedule -->
     <section>
       <h2 class="text-xl font-semibold mb-4 text-gray-700 dark:text-gray-200">Today's Schedule</h2>
-      <div class="grid gap-6 md:grid-cols-3">
-        <UCard v-for="session in todaysSessions" :key="session.id" class="border-l-4 border-l-primary-500 hover:shadow-lg transition-shadow">
-          <template #header>
-            <div class="flex justify-between items-start">
-              <div>
-                <p class="text-2xl font-bold text-primary-600 dark:text-primary-400">{{ session.time }}</p>
-                <p class="font-medium text-lg mt-1">{{ session.clientName }}</p>
-              </div>
-              <UIcon name="i-heroicons-calendar" class="w-6 h-6 text-gray-400" />
-            </div>
-          </template>
-          <div class="text-sm text-gray-600 dark:text-gray-400">
-            {{ session.type }}
-          </div>
-          <template #footer>
-             <UButton
-              :to="`/sessions/${session.id}`"
-              variant="soft"
-              color="primary"
-              block
-              label="Start Session"
-              icon="i-heroicons-play-circle"
-            />
-          </template>
+      
+      <!-- Loading State -->
+      <div v-if="isLoadingSchedules" class="grid gap-6 md:grid-cols-3">
+        <UCard v-for="i in 3" :key="i" class="animate-pulse">
+          <div class="h-6 bg-gray-200 dark:bg-gray-700 rounded w-24 mb-2"></div>
+          <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-32 mb-4"></div>
+          <div class="h-3 bg-gray-200 dark:bg-gray-700 rounded w-48"></div>
         </UCard>
+      </div>
+      
+      <!-- Empty State -->
+      <div v-else-if="todaysSessions.length === 0" class="text-center py-12 bg-gray-50 dark:bg-gray-900/50 rounded-xl border-2 border-dashed border-gray-200 dark:border-gray-700">
+        <UIcon name="i-heroicons-calendar-days" class="w-16 h-16 mx-auto text-gray-300 dark:text-gray-600 mb-4" />
+        <h3 class="text-lg font-semibold text-gray-600 dark:text-gray-400 mb-2">No Sessions Today</h3>
+        <p class="text-sm text-gray-500 dark:text-gray-500 mb-4">You have no training sessions scheduled for today.</p>
+        <UButton
+          label="Schedule Session"
+          color="primary"
+          variant="soft"
+          icon="i-heroicons-plus"
+        />
+      </div>
+      
+      <!-- Sessions Grid -->
+      <div v-else class="grid gap-6 md:grid-cols-3">
+        <NuxtLink 
+          v-for="session in todaysSessions" 
+          :key="session.id"
+          :to="`/sessions/${session.id}`"
+          class="block"
+        >
+          <UCard 
+            :class="[
+              'border-l-4 hover:shadow-lg transition-all cursor-pointer hover:scale-[1.02]',
+              session.status === 'completed' 
+                ? 'border-l-green-500 bg-green-50/50 dark:bg-green-900/10' 
+                : session.status === 'in-progress'
+                  ? 'border-l-blue-500 bg-blue-50/50 dark:bg-blue-900/10'
+                  : 'border-l-primary-500'
+            ]"
+          >
+            <template #header>
+              <div class="flex justify-between items-start">
+                <div>
+                  <p :class="[
+                    'text-2xl font-bold',
+                    session.status === 'completed' 
+                      ? 'text-green-600 dark:text-green-400' 
+                      : session.status === 'in-progress'
+                        ? 'text-blue-600 dark:text-blue-400'
+                        : 'text-primary-600 dark:text-primary-400'
+                  ]">{{ session.time }}</p>
+                  <p class="font-medium text-lg mt-1">{{ session.clientName }}</p>
+                </div>
+                <UIcon 
+                  :name="session.status === 'completed' 
+                    ? 'i-heroicons-check-circle-solid' 
+                    : session.status === 'in-progress'
+                      ? 'i-heroicons-play-circle-solid'
+                      : 'i-heroicons-calendar'" 
+                  :class="[
+                    'w-6 h-6',
+                    session.status === 'completed' ? 'text-green-500' : 
+                    session.status === 'in-progress' ? 'text-blue-500' : 'text-gray-400'
+                  ]" 
+                />
+              </div>
+            </template>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <span class="text-sm text-gray-600 dark:text-gray-400">{{ session.type }}</span>
+                <UBadge 
+                  v-if="session.status === 'completed'" 
+                  color="success" 
+                  variant="subtle" 
+                  size="xs"
+                  label="Completed"
+                />
+                <UBadge 
+                  v-else-if="session.status === 'in-progress'" 
+                  color="info" 
+                  variant="subtle" 
+                  size="xs"
+                  label="In Progress"
+                />
+              </div>
+              <UIcon 
+                name="i-heroicons-chevron-right" 
+                class="w-5 h-5 text-gray-400" 
+              />
+            </div>
+          </UCard>
+        </NuxtLink>
       </div>
     </section>
 

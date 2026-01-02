@@ -18,6 +18,7 @@
     "@nuxt/image": "2.0.0",
     "@nuxt/test-utils": "3.21.0",
     "@nuxt/ui": "^4.3.0",
+    "dexie": "^4.2.1",
     "firebase": "^12.7.0",
     "nuxt": "^4.2.2"
   },

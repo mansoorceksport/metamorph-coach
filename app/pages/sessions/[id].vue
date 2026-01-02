@@ -1,59 +1,97 @@
 <script setup lang="ts">
-const route = useRoute()
-const sessionId = route.params.id
+import type { PlannedExercise } from '~/utils/db'
 
-// Mock Session Data
+const route = useRoute()
+const sessionId = route.params.id as string
+
+// Database composable
+const { 
+  getSchedule, 
+  fetchPlannedExercises, 
+  getExercisePBs,
+  saveSetLog: dbSaveSetLog,
+  removePlannedExercise
+} = useDatabase()
+
+// Session Data (loaded from database)
 const session = ref({
   id: sessionId,
-  memberName: 'Sarah Jenkins',
-  goal: 'Hypertrophy Focus',
-  startTime: '3:00 PM',
+  memberName: 'Loading...',
+  goal: '',
+  startTime: '',
   status: 'in-progress'
 })
 
-// Mock Exercise Data (PlannedExercise schema)
-const exercises = ref([
-  {
-    id: 'ex1',
-    name: 'Barbell Back Squat',
-    targetSets: 4,
-    targetReps: 8,
-    restSeconds: 120,
-    notes: 'Focus on depth and controlled eccentric'
-  },
-  {
-    id: 'ex2',
-    name: 'Romanian Deadlift',
-    targetSets: 3,
-    targetReps: 10,
-    restSeconds: 90,
-    notes: 'Maintain neutral spine'
-  },
-  {
-    id: 'ex3',
-    name: 'Leg Press',
-    targetSets: 3,
-    targetReps: 12,
-    restSeconds: 60,
-    notes: 'Full range of motion'
-  },
-  {
-    id: 'ex4',
-    name: 'Walking Lunges',
-    targetSets: 3,
-    targetReps: 12,
-    restSeconds: 60,
-    notes: 'Each leg counts as 1 rep'
-  }
-])
+// Exercise Data (loaded from database)
+const exercises = ref<Array<{
+  id: string
+  name: string
+  targetSets: number
+  targetReps: number
+  restSeconds: number
+  notes?: string
+}>>([])
 
-// Mock Personal Bests (for PB detection)
-const exercisePBs: Record<string, number> = {
-  'ex1': 80, // Squat PB: 80kg
-  'ex2': 70, // RDL PB: 70kg
-  'ex3': 150, // Leg Press PB: 150kg
-  'ex4': 20 // Lunges PB: 20kg
+// Personal Bests (loaded from database)
+const exercisePBs = ref<Record<string, number>>({})
+
+// Loading state
+const isLoading = ref(true)
+
+// Load data from database on mount
+async function loadSessionData() {
+  if (!import.meta.client) return
+  
+  try {
+    // Load schedule
+    const schedule = await getSchedule(sessionId)
+    if (schedule) {
+      session.value = {
+        id: schedule.id,
+        memberName: schedule.member_name,
+        goal: schedule.session_goal || 'Workout Session',
+        startTime: new Date(schedule.start_time).toLocaleTimeString('en-US', { 
+          hour: 'numeric', 
+          minute: '2-digit',
+          hour12: true 
+        }),
+        status: schedule.status
+      }
+    }
+
+    // Load planned exercises
+    const planned = await fetchPlannedExercises(sessionId)
+    exercises.value = planned.map(ex => ({
+      id: ex.exercise_id,
+      name: ex.name,
+      targetSets: ex.target_sets,
+      targetReps: ex.target_reps,
+      restSeconds: ex.rest_seconds,
+      notes: ex.notes
+    }))
+
+    // Load PBs for these exercises
+    const exerciseIds = planned.map(ex => ex.exercise_id)
+    if (exerciseIds.length > 0) {
+      exercisePBs.value = await getExercisePBs(exerciseIds)
+    }
+
+    // Initialize set logs after loading exercises
+    initializeSetLogs()
+    
+    console.log(`[Session] Loaded ${exercises.value.length} exercises for session ${sessionId}`)
+  } catch (error) {
+    console.error('[Session] Failed to load session data:', error)
+  } finally {
+    isLoading.value = false
+  }
 }
+
+onMounted(async () => {
+  await loadSessionData()
+  await loadPersistedLogs()
+  await initLibrary()
+})
 
 // Set Logs State - tracks weight/reps/completed for each set
 interface SetLog {
@@ -78,21 +116,130 @@ function initializeSetLogs() {
 }
 initializeSetLogs()
 
+// Load persisted set logs from Dexie on mount
+async function loadPersistedLogs() {
+  if (!import.meta.client) return
+  
+  const { db } = await import('~/utils/db')
+  const scheduleId = sessionId as string
+  
+  try {
+    const persistedLogs = await db.sessionLogs
+      .where('schedule_id')
+      .equals(scheduleId)
+      .toArray()
+    
+    // Apply persisted logs to reactive state
+    persistedLogs.forEach(log => {
+      if (setLogs.value[log.exercise_id] && setLogs.value[log.exercise_id][log.set_index]) {
+        setLogs.value[log.exercise_id][log.set_index] = {
+          weight: log.weight,
+          reps: log.reps,
+          completed: log.completed
+        }
+      }
+    })
+    console.log(`[Session] Loaded ${persistedLogs.length} persisted logs from Dexie`)
+  } catch (error) {
+    console.error('[Session] Failed to load persisted logs:', error)
+  }
+}
+
+// Auto-save set log to Dexie when changed
+async function persistSetLog(exerciseId: string, setIndex: number) {
+  if (!import.meta.client) return
+  
+  const log = setLogs.value[exerciseId]?.[setIndex]
+  if (!log) return
+  
+  const exercise = exercises.value.find(ex => ex.id === exerciseId)
+  if (!exercise) return
+  
+  // Auto-unmark as complete if reps or weight is cleared
+  if (log.completed && (!log.reps || !log.weight)) {
+    log.completed = false
+    console.log(`[Session] Auto-uncompleted set ${setIndex + 1} (data cleared)`)
+  }
+  
+  try {
+    await dbSaveSetLog({
+      schedule_id: sessionId as string,
+      exercise_id: exerciseId,
+      exercise_name: exercise.name,
+      set_index: setIndex,
+      weight: log.weight,
+      reps: log.reps,
+      completed: log.completed
+    })
+    console.log(`[Session] Persisted set ${setIndex + 1} for ${exercise.name}`)
+  } catch (error) {
+    console.error('[Session] Failed to persist set log:', error)
+  }
+}
+
+// Debounce timer refs for each set
+const debounceTimers = ref<Record<string, ReturnType<typeof setTimeout>>>({})
+
+// Debounced persist on input - catches every keystroke including deletions
+function debouncedPersist(exerciseId: string, setIndex: number) {
+  const key = `${exerciseId}-${setIndex}`
+  
+  // Clear existing timer
+  if (debounceTimers.value[key]) {
+    clearTimeout(debounceTimers.value[key])
+  }
+  
+  // Set new timer - persist after 500ms of no typing
+  debounceTimers.value[key] = setTimeout(() => {
+    persistSetLog(exerciseId, setIndex)
+    delete debounceTimers.value[key]
+  }, 500)
+}
+
 // Check if a weight is a new PB
 function isNewPB(exerciseId: string, weight: number | null): boolean {
   if (!weight || weight <= 0) return false
-  const currentPB = exercisePBs[exerciseId] || 0
+  const currentPB = exercisePBs.value[exerciseId] || 0
   return weight > currentPB
 }
 
 // Get the current PB for an exercise
 function getPB(exerciseId: string): number {
-  return exercisePBs[exerciseId] || 0
+  return exercisePBs.value[exerciseId] || 0
 }
 
-// Mark set as complete
-function toggleSetComplete(exerciseId: string, setIndex: number) {
-  setLogs.value[exerciseId][setIndex].completed = !setLogs.value[exerciseId][setIndex].completed
+// Delete an exercise from the session
+async function deleteExercise(exerciseId: string) {
+  const toast = useToast()
+  
+  // Find the planned exercise by exercise_id
+  const planned = await fetchPlannedExercises(sessionId)
+  const toDelete = planned.find(ex => ex.exercise_id === exerciseId)
+  
+  if (toDelete?.id) {
+    await removePlannedExercise(toDelete.id)
+    
+    // Remove from local state
+    exercises.value = exercises.value.filter(ex => ex.id !== exerciseId)
+    delete setLogs.value[exerciseId]
+    
+    toast.add({
+      title: 'Exercise Removed',
+      description: `${toDelete.name} has been removed from this session.`,
+      icon: 'i-heroicons-trash',
+      color: 'neutral'
+    })
+    
+    console.log(`[Session] Deleted exercise ${exerciseId}`)
+  }
+}
+
+// Mark set as complete and persist
+async function toggleSetComplete(exerciseId: string, setIndex: number) {
+  if (setLogs.value[exerciseId]?.[setIndex]) {
+    setLogs.value[exerciseId][setIndex].completed = !setLogs.value[exerciseId][setIndex].completed
+    await persistSetLog(exerciseId, setIndex)
+  }
 }
 
 // Get exercise completion status
@@ -109,8 +256,41 @@ const overallProgress = computed(() => {
   return { completed, total, percentage: total > 0 ? Math.round((completed / total) * 100) : 0 }
 })
 
-// Check if session is complete
+// Check if session is complete (all sets done in current view)
 const isSessionComplete = computed(() => overallProgress.value.percentage === 100)
+
+// Check if session was already completed (status in database)
+const isAlreadyCompleted = computed(() => session.value.status === 'completed')
+
+// Check if session is in scheduled state (preview mode - coach is planning)
+const isPreviewMode = computed(() => session.value.status === 'scheduled')
+
+// Check if session is currently in progress
+const isInProgress = computed(() => session.value.status === 'in-progress')
+
+// Start the session - update status to 'in-progress'
+async function startSession() {
+  const { updateScheduleStatus } = useDatabase()
+  const toast = useToast()
+  
+  try {
+    await updateScheduleStatus(sessionId, 'in-progress')
+    session.value.status = 'in-progress'
+    toast.add({
+      title: 'Session Started',
+      description: `Training with ${session.value.memberName}`,
+      color: 'success',
+      icon: 'i-heroicons-play'
+    })
+    console.log('[Session] Status updated to in-progress')
+  } catch (error) {
+    console.error('[Session] Failed to start session:', error)
+    toast.add({
+      title: 'Failed to start session',
+      color: 'error'
+    })
+  }
+}
 
 // Add a set to an exercise
 function addSet(exerciseId: string) {
@@ -133,30 +313,124 @@ function removeSet(exerciseId: string, setIndex: number) {
 
 // Add a new exercise to the session
 const showAddExercise = ref(false)
-const newExerciseName = ref('')
+const selectedExercise = ref<{ id: string; name: string; muscle_group: string; equipment: string } | null>(null)
+const newExerciseSets = ref(3)
+const newExerciseReps = ref(10)
 
-function addExercise() {
-  if (!newExerciseName.value.trim()) return
+// Exercise library for dropdown
+const { exerciseLibrary, initLibrary, isLoadingLibrary } = useExerciseLibrary()
+
+// Dropdown options for exercise select
+const exerciseOptions = computed(() => {
+  return exerciseLibrary.value.map(ex => ({
+    id: ex.id,
+    label: ex.name,
+    name: ex.name,
+    muscle_group: ex.muscle_group,
+    equipment: ex.equipment,
+    suffix: ex.muscle_group
+  }))
+})
+
+async function addExercise() {
+  if (!selectedExercise.value) return
   
-  const newId = `ex${Date.now()}`
+  const { addPlannedExercise } = useDatabase()
+  
+  const newOrder = exercises.value.length + 1
+  
+  // Add to database
+  await addPlannedExercise({
+    schedule_id: sessionId,
+    exercise_id: selectedExercise.value.id,
+    name: selectedExercise.value.name,
+    target_sets: newExerciseSets.value,
+    target_reps: newExerciseReps.value,
+    rest_seconds: 60,
+    notes: '',
+    order: newOrder
+  })
+  
+  // Add to local state
   exercises.value.push({
-    id: newId,
-    name: newExerciseName.value.trim(),
-    targetSets: 3,
-    targetReps: 10,
+    id: selectedExercise.value.id,
+    name: selectedExercise.value.name,
+    targetSets: newExerciseSets.value,
+    targetReps: newExerciseReps.value,
     restSeconds: 60,
     notes: ''
   })
   
   // Initialize set logs for the new exercise
-  setLogs.value[newId] = Array.from({ length: 3 }, () => ({
+  setLogs.value[selectedExercise.value.id] = Array.from({ length: newExerciseSets.value }, () => ({
     weight: null,
     reps: null,
     completed: false
   }))
   
-  newExerciseName.value = ''
+  // Reset form
+  selectedExercise.value = null
+  newExerciseSets.value = 3
+  newExerciseReps.value = 10
   showAddExercise.value = false
+  
+  const toast = useToast()
+  toast.add({
+    title: 'Exercise Added',
+    icon: 'i-heroicons-plus-circle',
+    color: 'success'
+  })
+}
+
+// Update exercise plan (for preview mode inline editing)
+async function updateExercisePlan(exerciseId: string, field: string, value: number | string) {
+  // Update local state
+  const exercise = exercises.value.find(ex => ex.id === exerciseId)
+  if (exercise) {
+    (exercise as any)[field] = value
+  }
+  
+  // Persist to IndexedDB
+  try {
+    const { updatePlannedExerciseByKeys } = useDatabase()
+    await updatePlannedExerciseByKeys(sessionId, exerciseId, { [field === 'targetSets' ? 'target_sets' : field === 'targetReps' ? 'target_reps' : field === 'restSeconds' ? 'rest_seconds' : field]: value })
+    console.log(`[Session] Updated ${field} for exercise ${exerciseId}`)
+  } catch (error) {
+    console.error('[Session] Failed to update exercise:', error)
+  }
+}
+
+// Remove exercise from plan (for preview mode)
+async function removeExerciseFromPlan(exerciseId: string) {
+  const toast = useToast()
+  
+  try {
+    // Remove from local state
+    const exerciseName = exercises.value.find(ex => ex.id === exerciseId)?.name || 'Exercise'
+    exercises.value = exercises.value.filter(ex => ex.id !== exerciseId)
+    
+    // Remove from IndexedDB
+    const { removePlannedExerciseByKeys } = useDatabase()
+    await removePlannedExerciseByKeys(sessionId, exerciseId)
+    
+    // Also remove set logs
+    delete setLogs.value[exerciseId]
+    
+    toast.add({
+      title: 'Exercise Removed',
+      description: `${exerciseName} removed from plan`,
+      icon: 'i-heroicons-trash',
+      color: 'warning'
+    })
+    
+    console.log(`[Session] Removed exercise ${exerciseId} from plan`)
+  } catch (error) {
+    console.error('[Session] Failed to remove exercise:', error)
+    toast.add({
+      title: 'Failed to remove exercise',
+      color: 'error'
+    })
+  }
 }
 
 // Finish session flow
@@ -217,11 +491,74 @@ function submitRemarks() {
   showSummaryModal.value = true
 }
 
-// Final finish - navigate home
-function completeFinalFinish() {
-  console.log('Session finished with remarks:', coachRemarks.value)
-  console.log('Session data:', setLogs.value)
-  console.log('Improvements:', sessionImprovements.value)
+// Final finish - navigate home with optimistic sync
+async function completeFinalFinish() {
+  const toast = useToast()
+  const { updateScheduleStatus, queueSync, isOnline } = useDatabase()
+  
+  const scheduleId = sessionId as string
+
+  // Phase A: Optimistic - Update local state immediately
+  try {
+    await updateScheduleStatus(scheduleId, 'completed', coachRemarks.value)
+    session.value.status = 'completed'
+    console.log('[Session] Phase A: Optimistic update complete')
+  } catch (error) {
+    console.error('[Session] Failed to update local state:', error)
+  }
+
+  // Phase B: Network Attempt
+  try {
+    const response = await $fetch(`/api/v1/pro/schedules/${scheduleId}/complete`, {
+      method: 'POST',
+      body: {
+        remarks: coachRemarks.value,
+        session_logs: Object.entries(setLogs.value).flatMap(([exerciseId, logs]) =>
+          logs.map((log, index) => ({
+            exercise_id: exerciseId,
+            set_index: index,
+            weight: log.weight,
+            reps: log.reps,
+            completed: log.completed
+          }))
+        ),
+        improvements: sessionImprovements.value
+      }
+    })
+    console.log('[Session] Phase B: Network sync successful', response)
+  } catch (error: any) {
+    // Phase C: Failover - Queue for later sync
+    console.warn('[Session] Phase C: Network failed, queuing for offline sync', error)
+
+    await queueSync({
+      method: 'POST',
+      url: `/api/v1/pro/schedules/${scheduleId}/complete`,
+      body: JSON.stringify({
+        remarks: coachRemarks.value,
+        session_logs: Object.entries(setLogs.value).flatMap(([exerciseId, logs]) =>
+          logs.map((log, index) => ({
+            exercise_id: exerciseId,
+            set_index: index,
+            weight: log.weight,
+            reps: log.reps,
+            completed: log.completed
+          }))
+        ),
+        improvements: sessionImprovements.value
+      }),
+      priority: 'high'
+    })
+
+    // Show offline toast
+    toast.add({
+      title: 'Saved Offline',
+      description: "We'll sync your session as soon as you're back online.",
+      icon: 'i-heroicons-cloud-arrow-up',
+      color: 'warning'
+    })
+  }
+
+  // Close modal and navigate home
   showSummaryModal.value = false
   navigateTo('/')
 }
@@ -259,6 +596,255 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
       </div>
     </div>
 
+    <!-- COMPLETED SESSION SUMMARY VIEW -->
+    <template v-if="isAlreadyCompleted">
+      <div class="space-y-6">
+        <!-- Completion Banner -->
+        <div class="bg-gradient-to-r from-green-500 to-emerald-500 rounded-xl p-6 text-center text-white shadow-lg">
+          <UIcon name="i-heroicons-check-badge" class="w-16 h-16 mx-auto mb-3" />
+          <h2 class="text-2xl font-bold mb-2">Session Completed!</h2>
+          <p class="text-green-100">This workout has been successfully finished.</p>
+        </div>
+
+        <!-- Session Summary Card -->
+        <UCard>
+          <template #header>
+            <div class="flex items-center gap-2">
+              <UIcon name="i-heroicons-document-text" class="w-5 h-5 text-primary-500" />
+              <h3 class="font-semibold">Session Summary</h3>
+            </div>
+          </template>
+          
+          <div class="space-y-4">
+            <!-- Session Info -->
+            <div class="grid grid-cols-2 gap-4">
+              <div class="bg-gray-50 dark:bg-slate-800 rounded-lg p-3">
+                <p class="text-xs text-gray-500 uppercase tracking-wider">Member</p>
+                <p class="font-semibold text-gray-900 dark:text-white">{{ session.memberName }}</p>
+              </div>
+              <div class="bg-gray-50 dark:bg-slate-800 rounded-lg p-3">
+                <p class="text-xs text-gray-500 uppercase tracking-wider">Goal</p>
+                <p class="font-semibold text-gray-900 dark:text-white">{{ session.goal }}</p>
+              </div>
+              <div class="bg-gray-50 dark:bg-slate-800 rounded-lg p-3">
+                <p class="text-xs text-gray-500 uppercase tracking-wider">Scheduled</p>
+                <p class="font-semibold text-gray-900 dark:text-white">{{ session.startTime }}</p>
+              </div>
+              <div class="bg-gray-50 dark:bg-slate-800 rounded-lg p-3">
+                <p class="text-xs text-gray-500 uppercase tracking-wider">Status</p>
+                <UBadge color="success" variant="subtle" label="Completed" />
+              </div>
+            </div>
+
+            <!-- Exercises List -->
+            <div>
+              <p class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Exercises Completed</p>
+              <div class="space-y-2">
+                <div 
+                  v-for="exercise in exercises" 
+                  :key="exercise.id"
+                  class="flex items-center justify-between p-3 bg-gray-50 dark:bg-slate-800 rounded-lg"
+                >
+                  <div class="flex items-center gap-2">
+                    <UIcon name="i-heroicons-check-circle-solid" class="w-5 h-5 text-green-500" />
+                    <span class="font-medium">{{ exercise.name }}</span>
+                  </div>
+                  <span class="text-sm text-gray-500">{{ exercise.targetSets }} × {{ exercise.targetReps }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <template #footer>
+            <UButton
+              to="/"
+              block
+              color="primary"
+              label="Back to Command Center"
+              icon="i-heroicons-arrow-left"
+            />
+          </template>
+        </UCard>
+      </div>
+    </template>
+
+    <!-- PREVIEW MODE (Session is Scheduled - Coach is Planning) -->
+    <template v-else-if="isPreviewMode">
+      <div class="space-y-6 pb-24">
+        <!-- Preview Banner -->
+        <div class="bg-gradient-to-r from-blue-500 to-indigo-500 rounded-xl p-6 text-center text-white shadow-lg">
+          <UIcon name="i-heroicons-pencil-square" class="w-12 h-12 mx-auto mb-3" />
+          <h2 class="text-xl font-bold mb-2">Plan Session</h2>
+          <p class="text-blue-100 text-sm">Add exercises and set targets for {{ session.memberName }}</p>
+        </div>
+
+        <!-- Session Info Card -->
+        <UCard>
+          <template #header>
+            <div class="flex items-center gap-2">
+              <UIcon name="i-heroicons-information-circle" class="w-5 h-5 text-primary-500" />
+              <h3 class="font-semibold">Session Details</h3>
+            </div>
+          </template>
+          
+          <div class="grid grid-cols-2 gap-4">
+            <div class="bg-gray-50 dark:bg-slate-800 rounded-lg p-3">
+              <p class="text-xs text-gray-500 uppercase tracking-wider">Member</p>
+              <p class="font-semibold text-gray-900 dark:text-white">{{ session.memberName }}</p>
+            </div>
+            <div class="bg-gray-50 dark:bg-slate-800 rounded-lg p-3">
+              <p class="text-xs text-gray-500 uppercase tracking-wider">Goal</p>
+              <p class="font-semibold text-gray-900 dark:text-white">{{ session.goal }}</p>
+            </div>
+            <div class="bg-gray-50 dark:bg-slate-800 rounded-lg p-3">
+              <p class="text-xs text-gray-500 uppercase tracking-wider">Scheduled</p>
+              <p class="font-semibold text-gray-900 dark:text-white">{{ session.startTime }}</p>
+            </div>
+            <div class="bg-gray-50 dark:bg-slate-800 rounded-lg p-3">
+              <p class="text-xs text-gray-500 uppercase tracking-wider">Exercises</p>
+              <p class="font-semibold text-gray-900 dark:text-white">{{ exercises.length }} planned</p>
+            </div>
+          </div>
+        </UCard>
+
+        <!-- Workout Plan - Editable -->
+        <UCard>
+          <template #header>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <UIcon name="i-heroicons-clipboard-document-list" class="w-5 h-5 text-primary-500" />
+                <h3 class="font-semibold">Workout Plan</h3>
+              </div>
+              <UButton
+                label="Add Exercise"
+                color="primary"
+                variant="soft"
+                size="sm"
+                icon="i-heroicons-plus"
+                @click="showAddExercise = true"
+              />
+            </div>
+          </template>
+
+          <!-- Empty State -->
+          <div v-if="exercises.length === 0" class="text-center py-8">
+            <UIcon name="i-heroicons-clipboard-document" class="w-12 h-12 mx-auto text-gray-300 dark:text-gray-600 mb-3" />
+            <p class="text-gray-500 mb-4">No exercises planned yet</p>
+            <UButton
+              label="Add First Exercise"
+              color="primary"
+              icon="i-heroicons-plus"
+              @click="showAddExercise = true"
+            />
+          </div>
+
+          <!-- Exercise List -->
+          <div v-else class="space-y-4">
+            <div 
+              v-for="(exercise, index) in exercises" 
+              :key="exercise.id"
+              class="border border-gray-200 dark:border-gray-700 rounded-xl p-4 bg-gray-50/50 dark:bg-slate-800/50"
+            >
+              <!-- Exercise Header -->
+              <div class="flex items-start justify-between mb-3">
+                <div class="flex items-center gap-3">
+                  <span class="w-8 h-8 rounded-full bg-primary-500 text-white flex items-center justify-center text-sm font-bold">
+                    {{ index + 1 }}
+                  </span>
+                  <div>
+                    <h4 class="font-semibold text-gray-900 dark:text-white">{{ exercise.name }}</h4>
+                  </div>
+                </div>
+                <UButton
+                  icon="i-heroicons-trash"
+                  color="error"
+                  variant="ghost"
+                  size="xs"
+                  @click="removeExerciseFromPlan(exercise.id)"
+                />
+              </div>
+
+              <!-- Editable Fields -->
+              <div class="grid grid-cols-3 gap-3 mb-3">
+                <div>
+                  <label class="text-xs text-gray-500 block mb-1">Sets</label>
+                  <UInput
+                    :model-value="exercise.targetSets"
+                    type="number"
+                    size="sm"
+                    min="1"
+                    @update:model-value="(val) => updateExercisePlan(exercise.id, 'targetSets', Number(val))"
+                  />
+                </div>
+                <div>
+                  <label class="text-xs text-gray-500 block mb-1">Reps</label>
+                  <UInput
+                    :model-value="exercise.targetReps"
+                    type="number"
+                    size="sm"
+                    min="1"
+                    @update:model-value="(val) => updateExercisePlan(exercise.id, 'targetReps', Number(val))"
+                  />
+                </div>
+                <div>
+                  <label class="text-xs text-gray-500 block mb-1">Rest (sec)</label>
+                  <UInput
+                    :model-value="exercise.restSeconds"
+                    type="number"
+                    size="sm"
+                    min="0"
+                    step="15"
+                    @update:model-value="(val) => updateExercisePlan(exercise.id, 'restSeconds', Number(val))"
+                  />
+                </div>
+              </div>
+
+              <!-- Notes Field -->
+              <div>
+                <label class="text-xs text-gray-500 block mb-1">Notes / Goal</label>
+                <UTextarea
+                  :model-value="exercise.notes || ''"
+                  placeholder="E.g., Focus on form, increase weight from last week..."
+                  size="sm"
+                  :rows="2"
+                  @update:model-value="(val) => updateExercisePlan(exercise.id, 'notes', val)"
+                />
+              </div>
+            </div>
+          </div>
+        </UCard>
+
+        <!-- Add Exercise Button (Bottom of list) -->
+        <div class="text-center py-4 border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50/50 dark:bg-slate-800/50">
+          <UButton
+            label="Add Another Exercise"
+            icon="i-heroicons-plus-circle"
+            color="primary"
+            variant="soft"
+            size="lg"
+            @click="showAddExercise = true"
+          />
+        </div>
+
+        <!-- Start Session Button (Sticky) -->
+        <div class="fixed bottom-4 left-0 right-0 px-4 lg:left-64">
+          <div class="max-w-4xl mx-auto">
+            <UButton
+              label="Start Session"
+              color="primary"
+              size="xl"
+              icon="i-heroicons-play-circle"
+              block
+              @click="startSession"
+            />
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- ACTIVE WORKOUT VIEW (Session is In Progress) -->
+    <template v-else-if="isInProgress">
+    
     <!-- Progress Bar (Moved to Top) -->
     <div class="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-gray-800 p-4">
       <div class="flex items-center justify-between mb-2">
@@ -318,6 +904,15 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
             <span class="text-sm font-medium text-primary-600 dark:text-primary-400 ml-auto">
               {{ getExerciseProgress(exercise.id).completed }}/{{ getExerciseProgress(exercise.id).total }} sets
             </span>
+            <!-- Delete Exercise Button -->
+            <UButton
+              icon="i-heroicons-trash"
+              color="error"
+              variant="ghost"
+              size="xs"
+              @click="deleteExercise(exercise.id)"
+              aria-label="Remove exercise"
+            />
           </div>
 
           <!-- Set Logging Rows -->
@@ -353,6 +948,8 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
                       base: 'text-center text-lg font-bold'
                     }"
                     inputmode="numeric"
+                    @input="debouncedPersist(exercise.id, setIndex)"
+                    @blur="persistSetLog(exercise.id, setIndex)"
                   />
                   <!-- NEW PB Badge -->
                   <Transition
@@ -385,6 +982,8 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
                     base: 'text-center text-lg font-bold'
                   }"
                   inputmode="numeric"
+                  @input="debouncedPersist(exercise.id, setIndex)"
+                  @blur="persistSetLog(exercise.id, setIndex)"
                 />
               </div>
 
@@ -449,28 +1048,62 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
           @click="showAddExercise = true"
         />
       </div>
-      <div v-else class="space-y-3">
-        <UInput
-          v-model="newExerciseName"
-          placeholder="Exercise name (e.g., Bench Press)"
-          size="lg"
-          autofocus
-          @keyup.enter="addExercise"
-        />
+      <div v-else class="space-y-4">
+        <!-- Exercise Dropdown -->
+        <div>
+          <label class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">Select Exercise</label>
+          <UInputMenu
+            v-model="selectedExercise"
+            :items="exerciseOptions"
+            placeholder="Search exercises..."
+            :loading="isLoadingLibrary"
+            size="lg"
+            class="w-full"
+            by="id"
+          />
+        </div>
+        
+        <!-- Sets & Reps Inputs -->
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">Sets</label>
+            <UInput
+              v-model.number="newExerciseSets"
+              type="number"
+              min="1"
+              max="10"
+              size="lg"
+              inputmode="numeric"
+            />
+          </div>
+          <div>
+            <label class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">Reps</label>
+            <UInput
+              v-model.number="newExerciseReps"
+              type="number"
+              min="1"
+              max="50"
+              size="lg"
+              inputmode="numeric"
+            />
+          </div>
+        </div>
+        
+        <!-- Action Buttons -->
         <div class="flex gap-2">
           <UButton
-            label="Add"
+            label="Add Exercise"
             icon="i-heroicons-check"
             color="primary"
             class="flex-1"
             @click="addExercise"
-            :disabled="!newExerciseName.trim()"
+            :disabled="!selectedExercise"
           />
           <UButton
             label="Cancel"
             color="neutral"
             variant="outline"
-            @click="showAddExercise = false; newExerciseName = ''"
+            @click="showAddExercise = false; selectedExercise = null"
           />
         </div>
       </div>
@@ -503,6 +1136,87 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
         @click="handleFinishClick"
       />
     </div>
+    
+    </template>
+    <!-- END ACTIVE WORKOUT VIEW -->
+
+    <!-- Add Exercise Modal (Global - works in Preview and Active modes) -->
+    <UModal v-model:open="showAddExercise" :ui="{ width: 'sm:max-w-lg' }">
+      <template #content>
+        <div class="p-6">
+          <div class="flex items-center gap-4 mb-6">
+            <div class="w-12 h-12 bg-primary-100 dark:bg-primary-900/30 rounded-full flex items-center justify-center flex-shrink-0">
+              <UIcon name="i-heroicons-plus-circle" class="w-6 h-6 text-primary-500" />
+            </div>
+            <div>
+              <h3 class="text-xl font-bold text-gray-900 dark:text-white">Add Exercise</h3>
+              <p class="text-sm text-gray-500 dark:text-gray-400">Search and add to workout plan</p>
+            </div>
+          </div>
+
+          <!-- Exercise Dropdown -->
+          <div class="mb-4">
+            <label class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">Select Exercise</label>
+            <UInputMenu
+              v-model="selectedExercise"
+              :items="exerciseOptions"
+              placeholder="Search exercises..."
+              :loading="isLoadingLibrary"
+              size="lg"
+              class="w-full"
+              by="id"
+            />
+          </div>
+          
+          <!-- Sets & Reps Inputs -->
+          <div class="grid grid-cols-2 gap-3 mb-4">
+            <div>
+              <label class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">Sets</label>
+              <UInput
+                v-model.number="newExerciseSets"
+                type="number"
+                min="1"
+                max="10"
+                size="lg"
+                inputmode="numeric"
+              />
+            </div>
+            <div>
+              <label class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">Reps</label>
+              <UInput
+                v-model.number="newExerciseReps"
+                type="number"
+                min="1"
+                max="50"
+                size="lg"
+                inputmode="numeric"
+              />
+            </div>
+          </div>
+          
+          <!-- Action Buttons -->
+          <div class="flex gap-3">
+            <UButton
+              label="Cancel"
+              color="neutral"
+              variant="ghost"
+              size="lg"
+              class="flex-1"
+              @click="showAddExercise = false; selectedExercise = null"
+            />
+            <UButton
+              label="Add Exercise"
+              icon="i-heroicons-check"
+              color="primary"
+              size="lg"
+              class="flex-1"
+              @click="addExercise"
+              :disabled="!selectedExercise"
+            />
+          </div>
+        </div>
+      </template>
+    </UModal>
 
     <!-- Confirmation Modal -->
     <UModal v-model:open="showConfirmModal" :ui="{ width: 'sm:max-w-md' }">
