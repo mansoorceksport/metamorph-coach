@@ -140,6 +140,7 @@ const mockRecentPRs = [
         color="primary"
         size="lg"
         icon="i-heroicons-plus"
+        @click="$router.push('/schedule?new=1')"
       />
     </div>
 
@@ -166,6 +167,7 @@ const mockRecentPRs = [
           color="primary"
           variant="soft"
           icon="i-heroicons-plus"
+          @click="$router.push('/schedule?new=1')"
         />
       </div>
       

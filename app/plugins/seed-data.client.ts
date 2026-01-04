@@ -1,10 +1,10 @@
 /**
  * Seed Data Plugin
- * Seeds initial demo data for schedules, exercises, and planned workouts
+ * Seeds initial demo data for schedules, exercises, planned workouts, and members
  * Only runs once on first app launch (checks if data already exists)
  * Uses ULID for all IDs to ensure global uniqueness
  */
-import { db, type Schedule, type Exercise, type PlannedExercise } from '~/utils/db'
+import { db, type Schedule, type Exercise, type PlannedExercise, type CachedMember } from '~/utils/db'
 import { generateId } from '~/utils/crypto'
 
 // Generate stable ULIDs for seed data (regenerated on each fresh seed)
@@ -163,6 +163,64 @@ export default defineNuxtPlugin(async () => {
 
         console.log('[SeedData] Seeding planned exercises with ULIDs...')
         await db.plannedExercises.bulkPut(plannedExercises)
+
+        // Seed cached members for member dropdown
+        const cachedMembers: CachedMember[] = [
+            {
+                id: ids.member1,
+                name: 'Sarah Jenkins',
+                email: 'sarah.jenkins@email.com',
+                phone: '+62 812-3456-7890',
+                churn_score: 15,
+                attendance_trend: 'rising',
+                last_session_date: new Date().toISOString(),
+                total_sessions: 24,
+                cached_at: Date.now()
+            },
+            {
+                id: ids.member2,
+                name: 'Mike Chen',
+                email: 'mike.chen@email.com',
+                phone: '+62 813-5678-9012',
+                churn_score: 45,
+                attendance_trend: 'stable',
+                last_session_date: new Date(Date.now() - 86400000 * 2).toISOString(),
+                total_sessions: 18,
+                cached_at: Date.now()
+            },
+            {
+                id: ids.member3,
+                name: 'Emma Wilson',
+                email: 'emma.wilson@email.com',
+                phone: '+62 817-8901-2345',
+                churn_score: 72,
+                attendance_trend: 'declining',
+                last_session_date: new Date(Date.now() - 86400000 * 7).toISOString(),
+                total_sessions: 12,
+                cached_at: Date.now()
+            },
+            {
+                id: generateId(),
+                name: 'David Park',
+                email: 'david.park@email.com',
+                churn_score: 25,
+                attendance_trend: 'rising',
+                total_sessions: 32,
+                cached_at: Date.now()
+            },
+            {
+                id: generateId(),
+                name: 'Lisa Rodriguez',
+                email: 'lisa.rodriguez@email.com',
+                churn_score: 35,
+                attendance_trend: 'stable',
+                total_sessions: 15,
+                cached_at: Date.now()
+            }
+        ]
+
+        console.log('[SeedData] Seeding cached members...')
+        await db.cachedMembers.bulkPut(cachedMembers)
 
         console.log('[SeedData] Database seeded successfully with ULIDs')
 

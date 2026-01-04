@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import { db, type Schedule } from '~/utils/db'
+import { db, type Schedule, type CachedMember } from '~/utils/db'
+
+const { createSchedule, getCachedMembers } = useDatabase()
+const router = useRouter()
 
 // All schedules from database
 const schedules = ref<Schedule[]>([])
@@ -18,6 +21,19 @@ const statusOptions = [
   { label: 'No Show', value: 'no-show' }
 ]
 
+// New Schedule Modal
+const showNewScheduleModal = ref(false)
+const members = ref<CachedMember[]>([])
+const isCreating = ref(false)
+
+// Form state
+const newSchedule = ref({
+  member: null as CachedMember | null,
+  date: new Date().toISOString().split('T')[0],
+  time: '09:00',
+  sessionGoal: ''
+})
+
 // Load schedules from database
 async function loadSchedules() {
   if (!import.meta.client) return
@@ -33,7 +49,67 @@ async function loadSchedules() {
   }
 }
 
-onMounted(loadSchedules)
+// Load members for dropdown
+async function loadMembers() {
+  if (!import.meta.client) return
+  members.value = await getCachedMembers()
+}
+
+// Check for ?new=1 query param to auto-open modal
+const route = useRoute()
+
+onMounted(() => {
+  loadSchedules()
+  loadMembers()
+  
+  // Auto-open modal if navigated with ?new=1
+  if (route.query.new === '1') {
+    showNewScheduleModal.value = true
+  }
+})
+
+// Member options for dropdown
+const memberOptions = computed(() => 
+  members.value.map(m => ({
+    label: m.name,
+    value: m,
+    avatar: m.avatar
+  }))
+)
+
+// Create new schedule
+async function handleCreateSchedule() {
+  if (!newSchedule.value.member) return
+  
+  isCreating.value = true
+  try {
+    const startTime = new Date(`${newSchedule.value.date}T${newSchedule.value.time}:00`)
+    
+    const scheduleId = await createSchedule({
+      member_id: newSchedule.value.member.id,
+      member_name: newSchedule.value.member.name,
+      member_avatar: newSchedule.value.member.avatar,
+      start_time: startTime.toISOString(),
+      session_goal: newSchedule.value.sessionGoal || undefined
+    })
+    
+    // Reset form
+    newSchedule.value = {
+      member: null,
+      date: new Date().toISOString().split('T')[0],
+      time: '09:00',
+      sessionGoal: ''
+    }
+    showNewScheduleModal.value = false
+    
+    // Navigate to new session
+    router.push(`/sessions/${scheduleId}`)
+  } catch (error) {
+    console.error('[Schedule] Failed to create:', error)
+  } finally {
+    isCreating.value = false
+  }
+}
 
 // Filtered schedules
 const filteredSchedules = computed(() => {
@@ -111,6 +187,7 @@ function clearFilters() {
         color="primary"
         size="lg"
         icon="i-heroicons-plus"
+        @click="showNewScheduleModal = true"
       />
     </div>
 
@@ -257,5 +334,104 @@ function clearFilters() {
         </UCard>
       </NuxtLink>
     </div>
+
+    <!-- New Schedule Modal -->
+    <UModal v-model:open="showNewScheduleModal">
+      <template #header>
+        <div class="flex items-center gap-3">
+          <div class="p-2 bg-primary-100 dark:bg-primary-900/30 rounded-lg">
+            <UIcon name="i-heroicons-calendar-plus" class="w-6 h-6 text-primary-600 dark:text-primary-400" />
+          </div>
+          <div>
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">New Training Session</h3>
+            <p class="text-sm text-gray-500">Schedule a session with a member</p>
+          </div>
+        </div>
+      </template>
+
+      <template #body>
+        <div class="space-y-5 p-4">
+          <!-- Member Selection -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Select Member <span class="text-red-500">*</span>
+            </label>
+            <USelectMenu
+              v-model="newSchedule.member"
+              :items="memberOptions"
+              value-key="value"
+              placeholder="Choose a member..."
+              size="lg"
+              class="w-full"
+            >
+              <template #item="{ item }">
+                <div class="flex items-center gap-3">
+                  <UAvatar :alt="item.label" size="sm" />
+                  <span>{{ item.label }}</span>
+                </div>
+              </template>
+            </USelectMenu>
+          </div>
+
+          <!-- Date & Time -->
+          <div class="grid grid-cols-2 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Date <span class="text-red-500">*</span>
+              </label>
+              <UInput
+                v-model="newSchedule.date"
+                type="date"
+                size="lg"
+                class="w-full"
+              />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                Time <span class="text-red-500">*</span>
+              </label>
+              <UInput
+                v-model="newSchedule.time"
+                type="time"
+                size="lg"
+                class="w-full"
+              />
+            </div>
+          </div>
+
+          <!-- Session Goal -->
+          <div>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              Session Goal (optional)
+            </label>
+            <UInput
+              v-model="newSchedule.sessionGoal"
+              placeholder="e.g., Leg Day - Hypertrophy Focus"
+              size="lg"
+              class="w-full"
+            />
+          </div>
+        </div>
+      </template>
+
+      <template #footer>
+        <div class="flex justify-end gap-3">
+          <UButton
+            label="Cancel"
+            color="neutral"
+            variant="ghost"
+            @click="showNewScheduleModal = false"
+          />
+          <UButton
+            label="Create Session"
+            color="primary"
+            icon="i-heroicons-plus"
+            :loading="isCreating"
+            :disabled="!newSchedule.member"
+            @click="handleCreateSchedule"
+          />
+        </div>
+      </template>
+    </UModal>
   </div>
 </template>

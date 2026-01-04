@@ -2,7 +2,7 @@
  * Database Repository Composable
  * Provides reactive queries and mutations for offline-first data access
  */
-import { db, type Schedule, type SessionLog, type SyncQueueItem, type Exercise, type PlannedExercise, getTodayRange, checkIfNewPB, calculateVelocityDelta } from '~/utils/db'
+import { db, type Schedule, type SessionLog, type SyncQueueItem, type Exercise, type PlannedExercise, type CachedMember, getTodayRange, checkIfNewPB, calculateVelocityDelta } from '~/utils/db'
 import { generateId, generateHash, calculateBackoffMs } from '~/utils/crypto'
 import { liveQuery } from 'dexie'
 
@@ -311,6 +311,48 @@ export function useDatabase() {
     }
 
     /**
+     * Create a new schedule with defaults
+     */
+    interface CreateScheduleInput {
+        member_id: string
+        member_name: string
+        member_avatar?: string
+        start_time: string // ISO datetime
+        session_goal?: string
+    }
+
+    async function createSchedule(input: CreateScheduleInput): Promise<string> {
+        if (!import.meta.client) throw new Error('Client-side only')
+
+        // Get member info for churn/trend defaults
+        const member = await db.cachedMembers.get(input.member_id)
+
+        const schedule: Schedule = {
+            id: generateId(),
+            member_id: input.member_id,
+            member_name: input.member_name,
+            member_avatar: input.member_avatar,
+            start_time: input.start_time,
+            status: 'scheduled',
+            churn_score: member?.churn_score ?? 50,
+            attendance_trend: member?.attendance_trend ?? 'stable',
+            session_goal: input.session_goal
+        }
+
+        await db.schedules.put(schedule)
+        console.log(`[Database] Created schedule ${schedule.id} for ${input.member_name}`)
+        return schedule.id
+    }
+
+    /**
+     * Get all cached members for dropdown
+     */
+    async function getCachedMembers(): Promise<CachedMember[]> {
+        if (!import.meta.client) return []
+        return await db.cachedMembers.orderBy('name').toArray()
+    }
+
+    /**
      * Save or update an exercise
      */
     async function saveExercise(exercise: Exercise): Promise<void> {
@@ -565,6 +607,8 @@ export function useDatabase() {
         saveSetLog,
         saveSchedule,
         getSchedule,
+        createSchedule,
+        getCachedMembers,
         updateScheduleStatus,
         saveExercise,
 
