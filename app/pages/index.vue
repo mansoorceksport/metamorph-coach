@@ -100,24 +100,31 @@ const strengthWins = [
   { id: 'sw5', name: 'Emily R.', exercise: 'Pull Up', newWeight: 'BW+10kg', delta: '2.5kg' }
 ]
 
+// Member type for analytics cards
+interface AnalyticsMember {
+  id: string
+  name: string
+  [key: string]: any
+}
+
 // Selection Logic
-const selectedMember = ref(null)
+const selectedMember = ref<AnalyticsMember | null>(null)
 const selectedCategory = ref('')
 const isSlideoverOpen = ref(false)
 
-function handleMemberSelect(member: any, category: string) {
+function handleMemberSelect(member: AnalyticsMember, category: string) {
   selectedMember.value = member
   selectedCategory.value = category
   isSlideoverOpen.value = true
 }
 
-function getStatusColor(category: string) {
-  if (category === 'Rising Stars') return 'yellow'
-  if (category === 'Consistent') return 'green'
-  if (category === 'Intervention Needed') return 'red'
-  if (category === 'Churn Risk') return 'red'
-  if (category === 'Package Health') return 'orange'
-  if (category === 'Strength Wins') return 'indigo'
+function getStatusColor(category: string): 'success' | 'info' | 'primary' | 'warning' | 'error' | 'neutral' | 'secondary' {
+  if (category === 'Rising Stars') return 'warning'
+  if (category === 'Consistent') return 'success'
+  if (category === 'Intervention Needed') return 'error'
+  if (category === 'Churn Risk') return 'error'
+  if (category === 'Package Health') return 'warning'
+  if (category === 'Strength Wins') return 'info'
   return 'primary'
 }
 
@@ -516,7 +523,7 @@ const mockRecentPRs = [
       <template #footer>
         <div class="space-y-3 w-full">
           <UButton block label="Book Next Session" color="primary" variant="solid" />
-          <UButton block label="Message Member" icon="i-heroicons-chat-bubble-left-right" color="gray" variant="ghost" />
+          <UButton block label="Message Member" icon="i-heroicons-chat-bubble-left-right" color="neutral" variant="ghost" />
         </div>
       </template>
     </USlideover>

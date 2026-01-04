@@ -182,6 +182,6 @@ export function calculateVelocityDelta(
 ): number | undefined {
     if (history.length === 0 || currentWeight <= 0) return undefined
     const lastWeight = history[history.length - 1]
-    if (lastWeight <= 0) return undefined
+    if (lastWeight === undefined || lastWeight <= 0) return undefined
     return Math.round(((currentWeight - lastWeight) / lastWeight) * 100)
 }

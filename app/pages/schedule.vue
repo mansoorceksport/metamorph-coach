@@ -9,7 +9,7 @@ const schedules = ref<Schedule[]>([])
 const isLoading = ref(true)
 
 // Filters
-const selectedDate = ref<Date | null>(null)
+const selectedDate = ref<string | null>(null)
 const selectedStatus = ref<string>('all')
 
 const statusOptions = [
@@ -28,7 +28,7 @@ const isCreating = ref(false)
 
 // Form state
 const newSchedule = ref({
-  member: null as CachedMember | null,
+  member: undefined as CachedMember | undefined,
   date: new Date().toISOString().split('T')[0],
   time: '09:00',
   sessionGoal: ''
@@ -73,7 +73,7 @@ const memberOptions = computed(() =>
   members.value.map(m => ({
     label: m.name,
     value: m,
-    avatar: m.avatar
+    avatar: m.avatar ? { src: m.avatar, alt: m.name } : undefined
   }))
 )
 
@@ -95,7 +95,7 @@ async function handleCreateSchedule() {
     
     // Reset form
     newSchedule.value = {
-      member: null,
+      member: undefined,
       date: new Date().toISOString().split('T')[0],
       time: '09:00',
       sessionGoal: ''
@@ -365,8 +365,8 @@ function clearFilters() {
               class="w-full"
             >
               <template #item="{ item }">
-                <div class="flex items-center gap-3">
-                  <UAvatar :alt="item.label" size="sm" />
+                <div v-if="item && typeof item === 'object' && 'label' in item" class="flex items-center gap-3">
+                  <UAvatar :alt="String(item.label)" size="sm" />
                   <span>{{ item.label }}</span>
                 </div>
               </template>
