@@ -131,8 +131,8 @@ async function loadPersistedLogs() {
     
     // Apply persisted logs to reactive state
     persistedLogs.forEach(log => {
-      if (setLogs.value[log.exercise_id] && setLogs.value[log.exercise_id][log.set_index]) {
-        setLogs.value[log.exercise_id][log.set_index] = {
+      if (setLogs.value[log.exercise_id]?.[log.set_index]) {
+        setLogs.value[log.exercise_id]![log.set_index] = {
           weight: log.weight,
           reps: log.reps,
           completed: log.completed
@@ -313,7 +313,7 @@ function removeSet(exerciseId: string, setIndex: number) {
 
 // Add a new exercise to the session
 const showAddExercise = ref(false)
-const selectedExercise = ref<{ id: string; name: string; muscle_group: string; equipment: string } | null>(null)
+const selectedExercise = ref<{ id: string; label: string; name: string; muscle_group: string; equipment: string; suffix: string } | undefined>(undefined)
 const newExerciseSets = ref(3)
 const newExerciseReps = ref(10)
 
@@ -369,7 +369,7 @@ async function addExercise() {
   }))
   
   // Reset form
-  selectedExercise.value = null
+  selectedExercise.value = undefined
   newExerciseSets.value = 3
   newExerciseReps.value = 10
   showAddExercise.value = false
@@ -546,7 +546,11 @@ async function completeFinalFinish() {
         ),
         improvements: sessionImprovements.value
       }),
-      priority: 'high'
+      priority: 'high',
+      context: {
+        schedule_id: scheduleId,
+        type: 'session_complete'
+      }
     })
 
     // Show offline toast
@@ -869,7 +873,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
         icon: getExerciseProgress(ex.id).completed === getExerciseProgress(ex.id).total ? 'i-heroicons-check-circle-solid' : 'i-heroicons-clipboard-document-list',
         trailingIcon: ''
       }))"
-      :default-value="[exercises[0]?.id]"
+      :default-value="exercises[0]?.id ? [exercises[0].id] : []"
       multiple
       :ui="{ 
         root: 'flex flex-col gap-3',
@@ -1007,7 +1011,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
                   variant="ghost"
                   size="sm"
                   @click="removeSet(exercise.id, setIndex)"
-                  :disabled="setLogs[exercise.id].length <= 1"
+                  :disabled="(setLogs[exercise.id]?.length ?? 0) <= 1"
                   aria-label="Remove set"
                 />
               </div>
@@ -1020,7 +1024,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
               label="Add Set"
               icon="i-heroicons-plus"
               color="neutral"
-              variant="dashed"
+              variant="outline"
               size="sm"
               block
               @click="addSet(exercise.id)"
@@ -1103,7 +1107,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
             label="Cancel"
             color="neutral"
             variant="outline"
-            @click="showAddExercise = false; selectedExercise = null"
+            @click="showAddExercise = false; selectedExercise = undefined"
           />
         </div>
       </div>
@@ -1141,7 +1145,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
     <!-- END ACTIVE WORKOUT VIEW -->
 
     <!-- Add Exercise Modal (Global - works in Preview and Active modes) -->
-    <UModal v-model:open="showAddExercise" :ui="{ width: 'sm:max-w-lg' }">
+    <UModal v-model:open="showAddExercise" class="sm:max-w-lg">
       <template #content>
         <div class="p-6">
           <div class="flex items-center gap-4 mb-6">
@@ -1202,7 +1206,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
               variant="ghost"
               size="lg"
               class="flex-1"
-              @click="showAddExercise = false; selectedExercise = null"
+              @click="showAddExercise = false; selectedExercise = undefined"
             />
             <UButton
               label="Add Exercise"
@@ -1219,7 +1223,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
     </UModal>
 
     <!-- Confirmation Modal -->
-    <UModal v-model:open="showConfirmModal" :ui="{ width: 'sm:max-w-md' }">
+    <UModal v-model:open="showConfirmModal" class="sm:max-w-md">
       <template #content>
         <div class="p-8 text-center">
           <div class="w-20 h-20 mx-auto mb-6 bg-primary-100 dark:bg-primary-900/30 rounded-full flex items-center justify-center">
@@ -1253,7 +1257,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
     </UModal>
 
     <!-- Remarks Modal -->
-    <UModal v-model:open="showRemarksModal" :ui="{ width: 'sm:max-w-lg' }">
+    <UModal v-model:open="showRemarksModal" class="sm:max-w-lg">
       <template #content>
         <div class="p-6">
           <div class="flex items-center gap-4 mb-6">
@@ -1300,7 +1304,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
     </UModal>
 
     <!-- Summary Modal (Scrollable) -->
-    <UModal v-model:open="showSummaryModal" :ui="{ width: 'sm:max-w-lg' }">
+    <UModal v-model:open="showSummaryModal" class="sm:max-w-lg">
       <template #content>
         <div class="flex flex-col max-h-[85vh]">
           <!-- Fixed Header -->

@@ -88,6 +88,10 @@ export interface CachedMember {
     avatar?: string
     email?: string
     phone?: string
+    // Contract info for scheduling
+    active_contract_id: string  // For schedule creation (auto-resolved by backend if not provided)
+    remaining_sessions: number  // Show in UI for package health
+    // Analytics
     churn_score: number
     attendance_trend: 'rising' | 'stable' | 'declining'
     last_session_date?: string
@@ -148,6 +152,27 @@ export type ScheduleStatus = Schedule['status']
 export type AttendanceTrend = Schedule['attendance_trend']
 export type SyncPriority = SyncQueueItem['priority']
 export type HttpMethod = SyncQueueItem['method']
+
+// ============================================
+// DATABASE MANAGEMENT
+// ============================================
+
+/**
+ * Clear all data from the database (for logout)
+ * Removes all cached members, schedules, session logs, etc.
+ */
+export async function clearAllData(): Promise<void> {
+    console.log('[Database] Clearing all data...')
+    await Promise.all([
+        db.schedules.clear(),
+        db.sessionLogs.clear(),
+        db.cachedMembers.clear(),
+        db.plannedExercises.clear(),
+        db.syncQueue.clear()
+        // Note: Keep exercises as they're global catalog data
+    ])
+    console.log('[Database] All user data cleared')
+}
 
 // ============================================
 // UTILITY FUNCTIONS

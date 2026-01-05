@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { db, type Schedule, type CachedMember } from '~/utils/db'
 
-const { createSchedule, getCachedMembers } = useDatabase()
+const { createScheduleWithSync, deleteScheduleWithSync, getCachedMembers } = useDatabase()
 const router = useRouter()
+const toast = useToast()
 
 // All schedules from database
 const schedules = ref<Schedule[]>([])
@@ -49,10 +50,22 @@ async function loadSchedules() {
   }
 }
 
-// Load members for dropdown
+// Load members for dropdown (sync-aware)
 async function loadMembers() {
   if (!import.meta.client) return
+  
+  // First try to load from cache
   members.value = await getCachedMembers()
+  
+  // If cache is empty and we're online, try to sync from API
+  if (members.value.length === 0 && navigator.onLine) {
+    console.log('[Schedule] No cached members, attempting sync...')
+    const { syncClients } = useDatabase()
+    const result = await syncClients()
+    if (result.synced > 0) {
+      members.value = await getCachedMembers()
+    }
+  }
 }
 
 // Check for ?new=1 query param to auto-open modal
@@ -68,12 +81,14 @@ onMounted(() => {
   }
 })
 
-// Member options for dropdown
+// Member options for dropdown - show remaining sessions
 const memberOptions = computed(() => 
   members.value.map(m => ({
     label: m.name,
     value: m,
-    avatar: m.avatar ? { src: m.avatar, alt: m.name } : undefined
+    avatar: m.avatar ? { src: m.avatar, alt: m.name } : undefined,
+    // Show remaining sessions badge
+    suffix: m.remaining_sessions !== undefined ? `${m.remaining_sessions} sessions left` : undefined
   }))
 )
 
@@ -85,7 +100,7 @@ async function handleCreateSchedule() {
   try {
     const startTime = new Date(`${newSchedule.value.date}T${newSchedule.value.time}:00`)
     
-    const scheduleId = await createSchedule({
+    const scheduleId = await createScheduleWithSync({
       member_id: newSchedule.value.member.id,
       member_name: newSchedule.value.member.name,
       member_avatar: newSchedule.value.member.avatar,
@@ -108,6 +123,47 @@ async function handleCreateSchedule() {
     console.error('[Schedule] Failed to create:', error)
   } finally {
     isCreating.value = false
+  }
+}
+
+// Delete Schedule Modal
+const showDeleteModal = ref(false)
+const scheduleToDelete = ref<Schedule | null>(null)
+const isDeleting = ref(false)
+
+function openDeleteModal(schedule: Schedule) {
+  scheduleToDelete.value = schedule
+  showDeleteModal.value = true
+}
+
+async function handleDeleteSchedule() {
+  if (!scheduleToDelete.value) return
+  
+  isDeleting.value = true
+  try {
+    await deleteScheduleWithSync(scheduleToDelete.value.id)
+    
+    // Remove from local list
+    schedules.value = schedules.value.filter(s => s.id !== scheduleToDelete.value?.id)
+    
+    showDeleteModal.value = false
+    scheduleToDelete.value = null
+    
+    toast.add({
+      title: 'Schedule deleted',
+      description: 'The session has been removed',
+      icon: 'i-heroicons-check-circle',
+      color: 'success'
+    })
+  } catch (error: any) {
+    console.error('[Schedule] Failed to delete:', error)
+    toast.add({
+      title: 'Delete failed',
+      description: error.message,
+      color: 'error'
+    })
+  } finally {
+    isDeleting.value = false
   }
 }
 
@@ -316,8 +372,20 @@ function clearFilters() {
               </div>
             </div>
             
-            <!-- Status Icon -->
-            <div class="flex items-center">
+            <!-- Actions -->
+            <div class="flex items-center gap-2">
+              <!-- Delete button (only for scheduled sessions) -->
+              <UButton
+                v-if="schedule.status === 'scheduled'"
+                icon="i-heroicons-trash"
+                color="error"
+                variant="ghost"
+                size="xs"
+                @click.prevent.stop="openDeleteModal(schedule)"
+                title="Delete session"
+              />
+              
+              <!-- Status Icon -->
               <UIcon 
                 :name="schedule.status === 'completed' ? 'i-heroicons-check-circle-solid' : 
                        schedule.status === 'in-progress' ? 'i-heroicons-play-circle-solid' :
@@ -430,6 +498,41 @@ function clearFilters() {
             :disabled="!newSchedule.member"
             @click="handleCreateSchedule"
           />
+        </div>
+      </template>
+    </UModal>
+
+    <!-- Delete Confirmation Modal -->
+    <UModal v-model:open="showDeleteModal">
+      <template #content>
+        <div class="p-6 text-center">
+          <div class="w-16 h-16 mx-auto mb-4 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center">
+            <UIcon name="i-heroicons-trash" class="w-8 h-8 text-red-500" />
+          </div>
+          <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-2">Delete Session?</h3>
+          <p class="text-gray-500 dark:text-gray-400 mb-6">
+            Are you sure you want to delete the session with 
+            <span class="font-bold">{{ scheduleToDelete?.member_name }}</span>?
+            <br>
+            <span class="text-sm text-gray-400">This action cannot be undone.</span>
+          </p>
+          
+          <div class="flex gap-3 justify-center">
+            <UButton
+              label="Cancel"
+              color="neutral"
+              variant="ghost"
+              :disabled="isDeleting"
+              @click="showDeleteModal = false"
+            />
+            <UButton
+              label="Delete Session"
+              color="error"
+              icon="i-heroicons-trash"
+              :loading="isDeleting"
+              @click="handleDeleteSchedule"
+            />
+          </div>
         </div>
       </template>
     </UModal>

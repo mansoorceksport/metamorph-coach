@@ -123,6 +123,54 @@ export default defineNuxtPlugin(async (nuxtApp) => {
     }
 
     // ============================================
+    // INITIAL DATA SYNC
+    // ============================================
+
+    // Sync clients and schedules on app startup if online and authenticated
+    async function performInitialSync(): Promise<void> {
+        if (!navigator.onLine) {
+            console.log('[SyncEngine] Offline, skipping initial sync')
+            return
+        }
+
+        try {
+            const { syncClients, syncSchedules } = useDatabase()
+            const { isAuthenticated } = useAuth()
+
+            // Wait a bit to ensure auth state is initialized
+            await new Promise(resolve => setTimeout(resolve, 500))
+
+            if (!isAuthenticated.value) {
+                console.log('[SyncEngine] Not authenticated, skipping initial sync')
+                return
+            }
+
+            console.log('[SyncEngine] Performing initial data sync...')
+
+            // Sync clients (members) for the coach
+            const clientResult = await syncClients()
+            if (clientResult.synced > 0) {
+                console.log(`[SyncEngine] Synced ${clientResult.synced} clients`)
+            }
+
+            // Sync schedules for the next 7 days
+            const today = new Date()
+            const weekFromNow = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000)
+            const scheduleResult = await syncSchedules(today, weekFromNow)
+            if (scheduleResult.synced > 0) {
+                console.log(`[SyncEngine] Synced ${scheduleResult.synced} schedules`)
+            }
+
+            console.log('[SyncEngine] Initial sync complete')
+        } catch (error) {
+            console.error('[SyncEngine] Initial sync failed:', error)
+        }
+    }
+
+    // Run initial sync after a short delay to ensure auth is ready
+    setTimeout(performInitialSync, 1000)
+
+    // ============================================
     // CLEANUP
     // ============================================
 
@@ -133,7 +181,8 @@ export default defineNuxtPlugin(async (nuxtApp) => {
     // Provide a manual flush function
     nuxtApp.provide('syncEngine', {
         flush: flushQueue,
-        isProcessing: () => isProcessing
+        isProcessing: () => isProcessing,
+        syncNow: performInitialSync // Allow manual trigger
     })
 })
 
@@ -143,6 +192,7 @@ declare module '#app' {
         $syncEngine: {
             flush: () => Promise<void>
             isProcessing: () => boolean
+            syncNow: () => Promise<void>
         }
     }
 }

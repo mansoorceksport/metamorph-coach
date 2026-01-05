@@ -5,6 +5,10 @@ import {
     onAuthStateChanged,
     type User
 } from 'firebase/auth'
+import { clearAllData } from '~/utils/db'
+
+// Global flag to prevent duplicate listener registration
+let authListenerInitialized = false
 
 export const useAuth = () => {
     const { auth } = useFirebase()
@@ -14,17 +18,24 @@ export const useAuth = () => {
     const error = useState<string | null>('firebase-error', () => null)
     const config = useRuntimeConfig()
 
-    // Initialize auth state listener
-    if (process.client) {
+    // Initialize auth state listener ONCE
+    if (import.meta.client && !authListenerInitialized) {
+        authListenerInitialized = true
+
         onAuthStateChanged(auth, async (currentUser) => {
             user.value = currentUser
             if (currentUser) {
-                // Silently refresh token if needed on load
-                try {
-                    const token = await currentUser.getIdToken()
-                    await exchangeToken(token)
-                } catch (e) {
-                    console.error('Token exchange failed on init', e)
+                // Only exchange token if we don't already have a valid metamorph token
+                if (!metamorphToken.value) {
+                    try {
+                        console.log('[Auth] No metamorph token, exchanging Firebase token...')
+                        const token = await currentUser.getIdToken()
+                        await exchangeToken(token)
+                    } catch (e) {
+                        console.error('[Auth] Token exchange failed on init', e)
+                    }
+                } else {
+                    console.log('[Auth] Already have metamorph token, skipping exchange')
                 }
             }
             loading.value = false
@@ -55,6 +66,33 @@ export const useAuth = () => {
         }
     }
 
+    /**
+     * Sync user data after successful login
+     */
+    const syncUserData = async () => {
+        if (!import.meta.client) return
+
+        try {
+            console.log('[Auth] Syncing user data after login...')
+            const { syncClients, syncSchedules } = useDatabase()
+
+            // Sync clients (members) for this coach
+            const clientResult = await syncClients()
+            console.log(`[Auth] Synced ${clientResult.synced} clients`)
+
+            // Sync schedules for the next 7 days
+            const today = new Date()
+            const weekFromNow = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000)
+            const scheduleResult = await syncSchedules(today, weekFromNow)
+            console.log(`[Auth] Synced ${scheduleResult.synced} schedules`)
+
+            console.log('[Auth] User data sync complete')
+        } catch (error) {
+            console.error('[Auth] Failed to sync user data:', error)
+            // Don't block login on sync failure - data will be available from seed/cache
+        }
+    }
+
     const signInWithGoogle = async () => {
         loading.value = true
         error.value = null
@@ -68,6 +106,10 @@ export const useAuth = () => {
             await exchangeToken(token)
 
             user.value = result.user
+
+            // Sync user data in the background after successful login
+            syncUserData()
+
             return result.user
         } catch (err: any) {
             error.value = err.message || 'Failed to sign in with Google'
@@ -77,14 +119,74 @@ export const useAuth = () => {
         }
     }
 
-    const signOut = async () => {
+    /**
+     * Check if there are pending sync items that would be lost on logout
+     */
+    const checkPendingSync = async (): Promise<{ hasPending: boolean; count: number }> => {
+        if (!import.meta.client) return { hasPending: false, count: 0 }
+
+        try {
+            const { getPendingSyncItems } = useDatabase()
+            const pending = await getPendingSyncItems()
+            return { hasPending: pending.length > 0, count: pending.length }
+        } catch {
+            return { hasPending: false, count: 0 }
+        }
+    }
+
+    /**
+     * Force sync pending items before logout
+     */
+    const forceSyncBeforeLogout = async (): Promise<boolean> => {
+        if (!import.meta.client) return true
+
+        try {
+            const { processSyncQueue, getPendingSyncItems } = useDatabase()
+
+            // Process the sync queue
+            await processSyncQueue()
+
+            // Check if all items were synced
+            const remaining = await getPendingSyncItems()
+            return remaining.length === 0
+        } catch (error) {
+            console.error('[Auth] Force sync failed:', error)
+            return false
+        }
+    }
+
+    /**
+     * Sign out with optional force parameter to skip pending sync check
+     * @param options.force - Skip the pending sync check and logout anyway
+     */
+    const signOut = async (options?: { force?: boolean }): Promise<{ success: boolean; pendingCount?: number }> => {
         loading.value = true
         error.value = null
 
         try {
+            if (import.meta.client && !options?.force) {
+                // Check for pending sync items
+                const { hasPending, count } = await checkPendingSync()
+
+                if (hasPending) {
+                    console.log(`[Auth] Warning: ${count} pending sync items will be lost on logout`)
+                    loading.value = false
+                    return { success: false, pendingCount: count }
+                }
+            }
+
+            // Clear local database before signing out
+            if (import.meta.client) {
+                console.log('[Auth] Clearing local data on logout...')
+                await clearAllData()
+            }
+
             await firebaseSignOut(auth)
             user.value = null
             metamorphToken.value = null
+
+            console.log('[Auth] Logout complete, all local data cleared')
+            return { success: true }
         } catch (err: any) {
             error.value = err.message || 'Failed to sign out'
             throw err
@@ -102,6 +204,9 @@ export const useAuth = () => {
         error: readonly(error),
         isAuthenticated,
         signInWithGoogle,
-        signOut
+        signOut,
+        syncUserData, // Expose for manual refresh if needed
+        checkPendingSync, // Check if there are unsync'd items
+        forceSyncBeforeLogout // Force sync before logging out
     }
 }

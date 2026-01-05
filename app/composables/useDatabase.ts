@@ -353,6 +353,150 @@ export function useDatabase() {
     }
 
     /**
+     * Sync clients from API to local cache
+     * Note: Requires auth - call only when authenticated
+     */
+    async function syncClients(): Promise<{ synced: number; error?: string }> {
+        if (!import.meta.client) return { synced: 0 }
+
+        try {
+            // Lazy import to avoid circular dependency
+            const api = useApi()
+            const clients = await api.fetchClients()
+
+            // Convert to cached members and bulk upsert
+            const members = clients.map(api.clientToCachedMember)
+            await db.cachedMembers.bulkPut(members)
+
+            console.log(`[Database] Synced ${members.length} clients from API`)
+            return { synced: members.length }
+        } catch (error: any) {
+            console.error('[Database] Failed to sync clients:', error)
+            return { synced: 0, error: error.message }
+        }
+    }
+
+    /**
+     * Sync schedules from API to local cache
+     * Note: Requires auth - call only when authenticated
+     * @param from Start date for range (defaults to today)
+     * @param to End date for range (defaults to 7 days from now)
+     */
+    async function syncSchedules(from?: Date, to?: Date): Promise<{ synced: number; error?: string }> {
+        if (!import.meta.client) return { synced: 0 }
+
+        try {
+            // Lazy import to avoid circular dependency
+            const api = useApi()
+            const schedules = await api.fetchSchedules(from, to)
+
+            // Convert to local format and bulk upsert
+            const localSchedules = schedules.map(api.scheduleResponseToLocal)
+            await db.schedules.bulkPut(localSchedules)
+
+            console.log(`[Database] Synced ${localSchedules.length} schedules from API`)
+            return { synced: localSchedules.length }
+        } catch (error: any) {
+            console.error('[Database] Failed to sync schedules:', error)
+            return { synced: 0, error: error.message }
+        }
+    }
+
+    /**
+     * Create schedule with local-first + sync queue
+     */
+    async function createScheduleWithSync(input: CreateScheduleInput): Promise<string> {
+        if (!import.meta.client) throw new Error('Client-side only')
+
+        // 1. Create locally first (optimistic)
+        const scheduleId = await createSchedule(input)
+
+        // 2. Get API base URL from runtime config
+        const config = useRuntimeConfig()
+        const baseUrl = config.public.apiBase || ''
+
+        // 3. Queue for backend sync
+        await queueSync({
+            method: 'POST',
+            url: `${baseUrl}/v1/pro/schedules`,
+            body: JSON.stringify({
+                member_id: input.member_id,
+                start_time: input.start_time,
+                session_goal: input.session_goal
+            }),
+            priority: 'high',
+            context: {
+                schedule_id: scheduleId,
+                member_id: input.member_id,
+                type: 'schedule_create'
+            }
+        })
+
+        console.log(`[Database] Queued schedule ${scheduleId} for sync`)
+        return scheduleId
+    }
+
+    /**
+     * Delete schedule locally
+     */
+    async function deleteSchedule(scheduleId: string): Promise<void> {
+        if (!import.meta.client) throw new Error('Client-side only')
+
+        await db.schedules.delete(scheduleId)
+        // Also delete any planned exercises and session logs for this schedule
+        await db.plannedExercises.where('schedule_id').equals(scheduleId).delete()
+        await db.sessionLogs.where('schedule_id').equals(scheduleId).delete()
+        console.log(`[Database] Deleted schedule ${scheduleId}`)
+    }
+
+    /**
+     * Delete schedule with local-first + sync queue
+     */
+    async function deleteScheduleWithSync(scheduleId: string): Promise<void> {
+        if (!import.meta.client) throw new Error('Client-side only')
+
+        // 1. Delete locally first (optimistic)
+        await deleteSchedule(scheduleId)
+
+        // 2. Check if there is a pending "create" request for this schedule
+        // If so, we can just remove the create request and skip the delete request
+        // This avoids the "offline create -> offline delete -> online sync fail" edge case
+        const pendingItems = await db.syncQueue.toArray()
+        const pendingCreate = pendingItems.find(item =>
+            item.context?.type === 'schedule_create' &&
+            item.context?.schedule_id === scheduleId
+        )
+
+        // Also check if ID mismatch (pending create might have temp ID, but here we might have backend ID?)
+        // Actually, if we are deleting locally, we used the ID from the object.
+        // If it was created offline, it has a temp ID. The pending Create has the same temp ID.
+        // If it was synced, it has a backend ID. The pending Create is gone.
+        // So simple ID match is sufficient.
+
+        if (pendingCreate) {
+            console.log(`[Database] Found pending create for ${scheduleId}, canceling both create and delete sync`)
+            await removeSyncItem(pendingCreate.id)
+            return
+        }
+
+        // 3. Get API base URL and Queue for backend sync
+        const config = useRuntimeConfig()
+        const baseUrl = config.public.apiBase || ''
+
+        await queueSync({
+            method: 'DELETE',
+            url: `${baseUrl}/v1/pro/schedules/${scheduleId}`,
+            priority: 'high',
+            context: {
+                schedule_id: scheduleId,
+                type: 'schedule_delete'
+            }
+        })
+
+        console.log(`[Database] Queued schedule ${scheduleId} for delete sync`)
+    }
+
+    /**
      * Save or update an exercise
      */
     async function saveExercise(exercise: Exercise): Promise<void> {
@@ -412,6 +556,16 @@ export function useDatabase() {
         await db.syncQueue.add(item)
         await refreshPendingCount()
         console.log(`[SyncQueue] Queued: ${action.method} ${action.url} (correlation: ${item.correlation_id.slice(0, 8)}...)`)
+
+        // Trigger immediate sync if online (with small delay to batch multiple operations)
+        if (isOnline.value) {
+            setTimeout(() => {
+                processSyncQueue().catch(err =>
+                    console.error('[SyncQueue] Auto-sync failed:', err)
+                )
+            }, 100) // 100ms delay to batch rapid-fire queue additions
+        }
+
         return item.id
     }
 
@@ -478,12 +632,20 @@ export function useDatabase() {
             const items = await getPendingSyncItems()
             console.log(`[SyncQueue] Processing ${items.length} pending items`)
 
+            // Get auth token from cookie
+            const metamorphToken = useCookie<string | null>('metamorph-token')
+            if (!metamorphToken.value) {
+                console.warn('[SyncQueue] No auth token available, skipping sync')
+                return { success: 0, failed: 0 }
+            }
+
             for (const item of items) {
                 try {
-                    // Build request with X-Correlation-ID header
+                    // Build request with X-Correlation-ID and Authorization headers
                     const headers: Record<string, string> = {
                         'Content-Type': 'application/json',
                         'X-Correlation-ID': item.correlation_id,
+                        'Authorization': `Bearer ${metamorphToken.value}`,
                         ...(item.headers || {})
                     }
 
@@ -494,6 +656,63 @@ export function useDatabase() {
                     })
 
                     if (response.ok) {
+                        // Handle schedule creation - update local ID with backend ID
+                        if (item.method === 'POST' && item.context?.type === 'schedule_create') {
+                            try {
+                                const backendSchedule = await response.json()
+                                const localId = item.context.schedule_id
+                                if (backendSchedule.id && localId && backendSchedule.id !== localId) {
+                                    // Get the local schedule, update its ID to match backend
+                                    const localSchedule = await db.schedules.get(localId)
+                                    if (localSchedule) {
+                                        // Delete old record and insert with new ID
+                                        await db.schedules.delete(localId)
+                                        localSchedule.id = backendSchedule.id
+                                        await db.schedules.put(localSchedule)
+                                        console.log(`[SyncQueue] Updated schedule ID: ${localId} → ${backendSchedule.id}`)
+
+                                        // ---------------------------------------------------------
+                                        // CRITICAL: Update pending sync items that reference the old ID
+                                        // This handles the case where user deletes/modifies an item offline
+                                        // before it has been synced (and thus has a temp ID)
+                                        // ---------------------------------------------------------
+                                        const pendingItems = await db.syncQueue.toArray()
+                                        for (const pending of pendingItems) {
+                                            // Skip the current item (it's being removed anyway)
+                                            if (pending.id === item.id) continue
+
+                                            let modified = false
+
+                                            // 1. Update URL (e.g. DELETE /schedules/OLD_ID)
+                                            if (pending.url.includes(localId)) {
+                                                pending.url = pending.url.replace(localId, backendSchedule.id)
+                                                modified = true
+                                            }
+
+                                            // 2. Update Body (e.g. nested ID references)
+                                            if (pending.body && typeof pending.body === 'string' && pending.body.includes(localId)) {
+                                                pending.body = pending.body.replace(new RegExp(localId, 'g'), backendSchedule.id)
+                                                modified = true
+                                            }
+
+                                            // 3. Update Context
+                                            if (pending.context?.schedule_id === localId) {
+                                                pending.context.schedule_id = backendSchedule.id
+                                                modified = true
+                                            }
+
+                                            if (modified) {
+                                                await db.syncQueue.put(pending)
+                                                console.log(`[SyncQueue] Resolved optimistic ID in pending item ${pending.id}`)
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch (parseErr) {
+                                console.warn('[SyncQueue] Could not parse schedule response:', parseErr)
+                            }
+                        }
+
                         await removeSyncItem(item.id)
                         success++
                         console.log(`[SyncQueue] Success: ${item.method} ${item.url}`)
@@ -527,6 +746,44 @@ export function useDatabase() {
         if (!import.meta.client) return []
         const items = await db.syncQueue.toArray()
         return items.filter(item => item.retryCount >= MAX_RETRY_COUNT)
+    }
+
+    /**
+     * Reset dead-letter items for retry (force sync)
+     */
+    async function resetDeadLetterItems(): Promise<number> {
+        if (!import.meta.client) return 0
+
+        const deadItems = await getDeadLetterItems()
+        let resetCount = 0
+
+        for (const item of deadItems) {
+            await db.syncQueue.update(item.id, {
+                retryCount: 0,
+                nextRetryAt: undefined,
+                lastError: undefined
+            })
+            resetCount++
+        }
+
+        await refreshPendingCount()
+        console.log(`[SyncQueue] Reset ${resetCount} dead-letter items for retry`)
+        return resetCount
+    }
+
+    /**
+     * Force sync all pending items now
+     */
+    async function forceSyncNow(): Promise<{ success: number; failed: number; reset: number }> {
+        if (!import.meta.client) return { success: 0, failed: 0, reset: 0 }
+
+        // First reset any dead-lettered items
+        const resetCount = await resetDeadLetterItems()
+
+        // Then process the queue
+        const result = await processSyncQueue()
+
+        return { ...result, reset: resetCount }
     }
 
     /**
@@ -608,9 +865,16 @@ export function useDatabase() {
         saveSchedule,
         getSchedule,
         createSchedule,
+        createScheduleWithSync,
+        deleteSchedule,
+        deleteScheduleWithSync,
         getCachedMembers,
         updateScheduleStatus,
         saveExercise,
+
+        // Sync operations (requires auth)
+        syncClients,
+        syncSchedules,
 
         // Sync queue (idempotent with correlation context)
         queueSync,
@@ -619,6 +883,8 @@ export function useDatabase() {
         markSyncFailed,
         processSyncQueue,
         getDeadLetterItems,
+        resetDeadLetterItems,
+        forceSyncNow,
         refreshPendingCount,
 
         // Bulk operations

@@ -1,7 +1,12 @@
 <script setup lang="ts">
-const { signOut } = useAuth()
+const { signOut, checkPendingSync, forceSyncBeforeLogout } = useAuth()
 const toast = useToast()
-const { pendingSyncCount, isSyncing, isOnline } = useDatabase()
+const { pendingSyncCount, isSyncing, isOnline, forceSyncNow } = useDatabase()
+
+// Logout warning modal state
+const showLogoutWarning = ref(false)
+const pendingLogoutCount = ref(0)
+const isForceSyncing = ref(false)
 
 const navItems = [
   {
@@ -28,7 +33,15 @@ const navItems = [
 
 const handleLogout = async () => {
   try {
-    await signOut()
+    const result = await signOut()
+    
+    if (!result.success && result.pendingCount) {
+      // Has pending sync items - show warning
+      pendingLogoutCount.value = result.pendingCount
+      showLogoutWarning.value = true
+      return
+    }
+    
     await navigateTo('/login')
     toast.add({ 
       title: 'Logged out successfully', 
@@ -40,6 +53,104 @@ const handleLogout = async () => {
       title: 'Logout failed', 
       description: error.message, 
       color: 'error' 
+    })
+  }
+}
+
+const handleSyncAndLogout = async () => {
+  isForceSyncing.value = true
+  try {
+    // Try to sync first
+    const synced = await forceSyncBeforeLogout()
+    
+    if (synced) {
+      toast.add({
+        title: 'Data synced successfully',
+        color: 'success',
+        icon: 'i-heroicons-check-circle'
+      })
+    } else {
+      toast.add({
+        title: 'Some data could not be synced',
+        description: 'Check your internet connection',
+        color: 'warning',
+        icon: 'i-heroicons-exclamation-triangle'
+      })
+    }
+    
+    // Force logout after sync attempt
+    await signOut({ force: true })
+    showLogoutWarning.value = false
+    await navigateTo('/login')
+  } catch (error: any) {
+    toast.add({
+      title: 'Sync failed',
+      description: error.message,
+      color: 'error'
+    })
+  } finally {
+    isForceSyncing.value = false
+  }
+}
+
+const handleForceLogout = async () => {
+  try {
+    await signOut({ force: true })
+    showLogoutWarning.value = false
+    await navigateTo('/login')
+    toast.add({
+      title: 'Logged out',
+      description: 'Unsaved data was discarded',
+      color: 'warning',
+      icon: 'i-heroicons-exclamation-triangle'
+    })
+  } catch (error: any) {
+    toast.add({
+      title: 'Logout failed',
+      description: error.message,
+      color: 'error'
+    })
+  }
+}
+
+const handleForceSync = async () => {
+  if (isSyncing.value || !isOnline.value) return
+  
+  try {
+    toast.add({
+      title: 'Syncing...',
+      icon: 'i-heroicons-arrow-path',
+      color: 'info'
+    })
+    
+    const result = await forceSyncNow()
+    
+    if (result.success > 0) {
+      toast.add({
+        title: 'Sync Complete',
+        description: `${result.success} items synced successfully`,
+        icon: 'i-heroicons-check-circle',
+        color: 'success'
+      })
+    } else if (result.failed > 0) {
+      toast.add({
+        title: 'Sync Issues',
+        description: `${result.failed} items failed to sync`,
+        icon: 'i-heroicons-exclamation-triangle',
+        color: 'warning'
+      })
+    } else {
+      toast.add({
+        title: 'Nothing to sync',
+        icon: 'i-heroicons-check',
+        color: 'neutral'
+      })
+    }
+  } catch (error: any) {
+    toast.add({
+      title: 'Sync failed',
+      description: error.message,
+      color: 'error'
     })
   }
 }
@@ -80,10 +191,16 @@ const handleLogout = async () => {
             <UIcon name="i-heroicons-arrow-path" class="w-4 h-4 text-blue-600 animate-spin" />
             <span class="text-xs font-medium text-blue-700 dark:text-blue-400">Syncing...</span>
           </div>
-          <div v-else-if="pendingSyncCount > 0" class="flex items-center gap-2 px-3 py-1.5 bg-orange-100 dark:bg-orange-900/30 rounded-full">
+          <button 
+            v-else-if="pendingSyncCount > 0" 
+            class="flex items-center gap-2 px-3 py-1.5 bg-orange-100 dark:bg-orange-900/30 rounded-full hover:bg-orange-200 dark:hover:bg-orange-900/50 transition-colors cursor-pointer"
+            @click="handleForceSync"
+            title="Click to force sync"
+          >
             <UIcon name="i-heroicons-cloud-arrow-up" class="w-4 h-4 text-orange-600" />
             <span class="text-xs font-medium text-orange-700 dark:text-orange-400">{{ pendingSyncCount }} pending</span>
-          </div>
+            <UIcon name="i-heroicons-arrow-path" class="w-3 h-3 text-orange-500" />
+          </button>
           <UButton
             color="neutral"
             variant="ghost"
@@ -182,5 +299,67 @@ const handleLogout = async () => {
         </div>
       </div>
     </nav>
+
+    <!-- Logout Warning Modal -->
+    <UModal v-model:open="showLogoutWarning">
+      <template #content>
+        <div class="p-6 text-center">
+          <div class="w-16 h-16 mx-auto mb-4 bg-orange-100 dark:bg-orange-900/30 rounded-full flex items-center justify-center">
+            <UIcon name="i-heroicons-exclamation-triangle" class="w-8 h-8 text-orange-500" />
+          </div>
+          <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-2">Unsaved Data Warning</h3>
+          <p class="text-gray-500 dark:text-gray-400 mb-6">
+            You have <span class="font-bold text-orange-600">{{ pendingLogoutCount }}</span> 
+            {{ pendingLogoutCount === 1 ? 'item' : 'items' }} that haven't been synced to the server.
+            <br><br>
+            If you logout now, <span class="font-bold text-red-600">this data will be lost</span>.
+          </p>
+          
+          <!-- Options -->
+          <div class="space-y-3">
+            <!-- Sync and Logout (Recommended) -->
+            <UButton
+              :label="isForceSyncing ? 'Syncing...' : 'Sync & Logout (Recommended)'"
+              color="primary"
+              size="lg"
+              block
+              icon="i-heroicons-cloud-arrow-up"
+              :loading="isForceSyncing"
+              :disabled="!isOnline || isForceSyncing"
+              @click="handleSyncAndLogout"
+            />
+            
+            <!-- Offline Warning -->
+            <p v-if="!isOnline" class="text-xs text-yellow-600 dark:text-yellow-400 flex items-center justify-center gap-1">
+              <UIcon name="i-heroicons-wifi" class="w-3 h-3" />
+              Connect to internet to sync data
+            </p>
+            
+            <!-- Force Logout (Dangerous) -->
+            <UButton
+              label="Logout Anyway (Lose Data)"
+              color="error"
+              variant="outline"
+              size="lg"
+              block
+              icon="i-heroicons-trash"
+              :disabled="isForceSyncing"
+              @click="handleForceLogout"
+            />
+            
+            <!-- Cancel -->
+            <UButton
+              label="Cancel"
+              color="neutral"
+              variant="ghost"
+              size="lg"
+              block
+              :disabled="isForceSyncing"
+              @click="showLogoutWarning = false"
+            />
+          </div>
+        </div>
+      </template>
+    </UModal>
   </div>
 </template>

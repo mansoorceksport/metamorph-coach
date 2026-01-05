@@ -55,6 +55,10 @@ export default defineNuxtPlugin(async () => {
     // Only run on client
     if (!import.meta.client) return
 
+    // DISABLED: Using real backend data only
+    console.log('[SeedData] Seed data disabled - using backend data only')
+    return
+
     try {
         // Check if data already seeded
         const existingSchedules = await db.schedules.count()
@@ -164,13 +168,16 @@ export default defineNuxtPlugin(async () => {
         console.log('[SeedData] Seeding planned exercises with ULIDs...')
         await db.plannedExercises.bulkPut(plannedExercises)
 
-        // Seed cached members for member dropdown
+        // Seed cached members for member dropdown (demo data)
+        // In production, these come from sync with /v1/pro/clients
         const cachedMembers: CachedMember[] = [
             {
                 id: ids.member1,
                 name: 'Sarah Jenkins',
                 email: 'sarah.jenkins@email.com',
                 phone: '+62 812-3456-7890',
+                active_contract_id: 'demo-contract-1', // Demo placeholder
+                remaining_sessions: 8,
                 churn_score: 15,
                 attendance_trend: 'rising',
                 last_session_date: new Date().toISOString(),
@@ -182,6 +189,8 @@ export default defineNuxtPlugin(async () => {
                 name: 'Mike Chen',
                 email: 'mike.chen@email.com',
                 phone: '+62 813-5678-9012',
+                active_contract_id: 'demo-contract-2',
+                remaining_sessions: 12,
                 churn_score: 45,
                 attendance_trend: 'stable',
                 last_session_date: new Date(Date.now() - 86400000 * 2).toISOString(),
@@ -193,6 +202,8 @@ export default defineNuxtPlugin(async () => {
                 name: 'Emma Wilson',
                 email: 'emma.wilson@email.com',
                 phone: '+62 817-8901-2345',
+                active_contract_id: 'demo-contract-3',
+                remaining_sessions: 3,
                 churn_score: 72,
                 attendance_trend: 'declining',
                 last_session_date: new Date(Date.now() - 86400000 * 7).toISOString(),
@@ -203,6 +214,8 @@ export default defineNuxtPlugin(async () => {
                 id: generateId(),
                 name: 'David Park',
                 email: 'david.park@email.com',
+                active_contract_id: 'demo-contract-4',
+                remaining_sessions: 18,
                 churn_score: 25,
                 attendance_trend: 'rising',
                 total_sessions: 32,
@@ -212,6 +225,8 @@ export default defineNuxtPlugin(async () => {
                 id: generateId(),
                 name: 'Lisa Rodriguez',
                 email: 'lisa.rodriguez@email.com',
+                active_contract_id: 'demo-contract-5',
+                remaining_sessions: 5,
                 churn_score: 35,
                 attendance_trend: 'stable',
                 total_sessions: 15,
@@ -219,7 +234,7 @@ export default defineNuxtPlugin(async () => {
             }
         ]
 
-        console.log('[SeedData] Seeding cached members...')
+        console.log('[SeedData] Seeding demo members (will be replaced by API sync)...')
         await db.cachedMembers.bulkPut(cachedMembers)
 
         console.log('[SeedData] Database seeded successfully with ULIDs')
