@@ -12,7 +12,9 @@ import Dexie, { type EntityTable } from 'dexie'
  * Schedule with augmented intelligence fields for Command Center UI
  */
 export interface Schedule {
-    id: string
+    id: string // ULID - immutable local primary key
+    remote_id: string | null // MongoDB ObjectID, null until synced
+    sync_status: 'pending' | 'synced' | 'deleted'
     member_id: string
     start_time: string // ISO datetime
     end_time?: string
@@ -45,7 +47,9 @@ export interface Exercise {
  * Session log entry for tracking sets with PB flags
  */
 export interface SessionLog {
-    id: string // ULID
+    id: string // ULID - immutable local primary key
+    remote_id: string | null // MongoDB ObjectID, null until synced
+    sync_status: 'pending' | 'synced' | 'deleted'
     schedule_id: string
     exercise_id: string
     exercise_name: string
@@ -103,7 +107,9 @@ export interface CachedMember {
  * Planned exercise for a session (workout plan)
  */
 export interface PlannedExercise {
-    id: string // ULID
+    id: string // ULID - immutable local primary key
+    remote_id: string | null // MongoDB ObjectID, null until synced
+    sync_status: 'pending' | 'synced' | 'deleted'
     schedule_id: string
     exercise_id: string
     name: string
@@ -129,14 +135,15 @@ export class MetamorphDB extends Dexie {
     constructor() {
         super('MetamorphCoachDB')
 
-        this.version(5).stores({
+        // Version 6: Dual-Identity Sync (remote_id, sync_status)
+        this.version(6).stores({
             // Primary key and indexed fields
-            schedules: 'id, member_id, start_time, status, [start_time+status]',
+            schedules: 'id, remote_id, member_id, start_time, status, sync_status, [start_time+status]',
             exercises: 'id, name, muscle_group',
-            sessionLogs: 'id, schedule_id, exercise_id, [schedule_id+exercise_id]',
+            sessionLogs: 'id, remote_id, schedule_id, exercise_id, sync_status, [schedule_id+exercise_id]',
             syncQueue: 'id, correlation_id, payload_hash, timestamp, priority, nextRetryAt',
             cachedMembers: 'id, name, churn_score, attendance_trend',
-            plannedExercises: 'id, schedule_id, exercise_id, [schedule_id+order]'
+            plannedExercises: 'id, remote_id, schedule_id, exercise_id, sync_status, [schedule_id+order]'
         })
     }
 }

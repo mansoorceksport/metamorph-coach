@@ -21,6 +21,7 @@ export interface ClientResponse {
 
 export interface ScheduleResponse {
     id: string
+    client_id?: string  // Frontend ULID for dual-identity
     tenant_id: string
     branch_id: string
     contract_id: string
@@ -161,6 +162,7 @@ export function useApi() {
 
     /**
      * Convert API schedule response to local Schedule format
+     * Uses client_id (ULID) as primary key if present, with MongoDB ID as remote_id
      */
     function scheduleResponseToLocal(schedule: ScheduleResponse): Schedule {
         // Map backend status to frontend status (handle case differences)
@@ -178,8 +180,14 @@ export function useApi() {
             'in-progress': 'in-progress'
         }
 
+        // Dual-identity: use client_id as local primary key if available
+        const localId = schedule.client_id || schedule.id
+        const remoteId = schedule.client_id ? schedule.id : null
+
         return {
-            id: schedule.id,
+            id: localId,
+            remote_id: remoteId,
+            sync_status: 'synced', // Came from backend, so it's synced
             member_id: schedule.member_id,
             member_name: schedule.member_name || '',
             start_time: schedule.start_time,

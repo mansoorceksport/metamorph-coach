@@ -396,21 +396,34 @@ async function addExercise() {
 }
 
 // Update exercise plan (for preview mode inline editing)
+// Use debouncing to avoid spamming the backend
+const updateDebounceTimers = new Map<string, NodeJS.Timeout>()
+
 async function updateExercisePlan(exerciseId: string, field: string, value: number | string) {
-  // Update local state
+  // Update local state immediately (optimistic UI)
   const exercise = exercises.value.find(ex => ex.id === exerciseId)
   if (exercise) {
     (exercise as any)[field] = value
   }
   
-  // Persist to IndexedDB
-  try {
-    const { updatePlannedExerciseWithSync } = useDatabase()
-    await updatePlannedExerciseWithSync(exerciseId, { [field === 'targetSets' ? 'target_sets' : field === 'targetReps' ? 'target_reps' : field === 'restSeconds' ? 'rest_seconds' : field]: value })
-    console.log(`[Session] Updated ${field} for exercise ${exerciseId}`)
-  } catch (error) {
-    console.error('[Session] Failed to update exercise:', error)
+  // Debounce the sync - clear previous timer for this field+exercise combo
+  const debounceKey = `${exerciseId}:${field}`
+  const existingTimer = updateDebounceTimers.get(debounceKey)
+  if (existingTimer) {
+    clearTimeout(existingTimer)
   }
+  
+  // Set new timer - sync after 2 seconds of no changes (gym-friendly delay)
+  updateDebounceTimers.set(debounceKey, setTimeout(async () => {
+    updateDebounceTimers.delete(debounceKey)
+    try {
+      const { updatePlannedExerciseWithSync } = useDatabase()
+      await updatePlannedExerciseWithSync(exerciseId, { [field === 'targetSets' ? 'target_sets' : field === 'targetReps' ? 'target_reps' : field === 'restSeconds' ? 'rest_seconds' : field]: value })
+      console.log(`[Session] Synced ${field} for exercise ${exerciseId}`)
+    } catch (error) {
+      console.error('[Session] Failed to update exercise:', error)
+    }
+  }, 2000))
 }
 
 // Remove exercise from plan (for preview mode)

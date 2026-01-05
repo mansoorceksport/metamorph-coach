@@ -171,7 +171,7 @@ export function useDatabase() {
     /**
      * Add a planned exercise with sync
      */
-    async function addPlannedExerciseWithSync(exercise: Omit<PlannedExercise, 'id'>): Promise<string> {
+    async function addPlannedExerciseWithSync(exercise: Omit<PlannedExercise, 'id' | 'remote_id' | 'sync_status'>): Promise<string> {
         if (!import.meta.client) throw new Error('Client-side only')
 
         // 1. Save locally with temp ID
@@ -179,16 +179,21 @@ export function useDatabase() {
         // Existing code uses generateId() or ulid()? Let's check imports or other usages. 
         // Previous view showed `const id = generateId()` in addPlannedExercise. so use that.
         const id = generateId()
-        await db.plannedExercises.add({ ...exercise, id })
+        await db.plannedExercises.add({ ...exercise, id, remote_id: null, sync_status: 'pending' })
 
-        // 2. Queue Sync
+        // 2. Queue Sync (include client_id for dual-identity handshake)
         const config = useRuntimeConfig()
         const baseUrl = config.public.apiBase || ''
 
+        // Resolve schedule's remote_id for the backend URL
+        const schedule = await db.schedules.get(exercise.schedule_id)
+        const backendScheduleId = schedule?.remote_id || exercise.schedule_id
+
         await queueSync({
             method: 'POST',
-            url: `${baseUrl}/v1/pro/schedules/${exercise.schedule_id}/exercises`,
+            url: `${baseUrl}/v1/pro/schedules/${backendScheduleId}/exercises`,
             body: JSON.stringify({
+                client_id: id, // Local ULID for identity handshake
                 exercise_id: exercise.exercise_id,
                 target_sets: exercise.target_sets,
                 target_reps: exercise.target_reps,
@@ -200,7 +205,8 @@ export function useDatabase() {
             context: {
                 type: 'exercise_add',
                 temp_id: id,
-                schedule_id: exercise.schedule_id
+                schedule_id: exercise.schedule_id,
+                backend_schedule_id: backendScheduleId
             }
         })
 
@@ -208,84 +214,117 @@ export function useDatabase() {
     }
 
     /**
-     * Remove a planned exercise with sync
+     * Remove a planned exercise with sync (Dual-Identity aware)
      */
     async function removePlannedExerciseWithSync(id: string): Promise<void> {
         if (!import.meta.client) return
 
-        const ex = await db.plannedExercises.get(id)
-        // If not found, maybe already deleted? Just return.
+        const entity = await db.plannedExercises.get(id)
+        if (!entity) return // Already deleted
 
-        // 1. Remove locally
-        await db.plannedExercises.delete(id)
+        // Scenario A: Not synced yet (remote_id is null or undefined)
+        // Also check if id looks like a MongoDB ObjectID (legacy synced records before migration)
+        const isMongoObjectId = /^[a-f0-9]{24}$/.test(id)
 
-        // 2. Check for pending create (Smart Deletion)
-        const pendingItems = await db.syncQueue.toArray()
-        const pendingCreate = pendingItems.find(item =>
-            item.context?.type === 'exercise_add' &&
-            item.context?.temp_id === id
-        )
+        if (!entity.remote_id && !isMongoObjectId) {
+            // Cancel pending POST in syncQueue
+            const pendingCreate = await db.syncQueue
+                .filter(item => item.context?.type === 'exercise_add' && item.context?.temp_id === id)
+                .first()
 
-        if (pendingCreate) {
-            console.log(`[Database] Smart Deletion: Cancelled pending create for exercise ${id}`)
-            await removeSyncItem(pendingCreate.id)
+            if (pendingCreate) {
+                await removeSyncItem(pendingCreate.id)
+                console.log(`[Sync] Smart Deletion: Cancelled pending POST for exercise ${id}`)
+            }
+
+            // Delete locally
+            await db.plannedExercises.delete(id)
             return
         }
 
-        // 3. Queue Delete
+        // Scenario B: Already synced (remote_id exists OR legacy MongoDB ObjectID)
+        await db.plannedExercises.update(id, { sync_status: 'deleted' })
+        await db.plannedExercises.delete(id)
+
+        // Queue DELETE using remote_id (or id for legacy records)
         const config = useRuntimeConfig()
         const baseUrl = config.public.apiBase || ''
+        const deleteId = entity.remote_id || id // Use remote_id if available, else fallback to id
 
         await queueSync({
             method: 'DELETE',
-            url: `${baseUrl}/v1/pro/exercises/${id}`,
+            url: `${baseUrl}/v1/pro/exercises/${deleteId}`,
             priority: 'normal',
             context: {
                 type: 'exercise_remove',
-                exercise_id: id
+                local_id: id,
+                remote_id: deleteId
             }
         })
+        console.log(`[Sync] Queued DELETE for exercise ${id} (remote: ${deleteId})`)
     }
 
     /**
      * Update a planned exercise
+     * If exercise hasn't synced yet (remote_id is null), updates the pending POST body instead
      */
     async function updatePlannedExerciseWithSync(id: string, data: Partial<PlannedExercise>): Promise<void> {
         if (!import.meta.client) return
 
-        // 1. Update locally
+        // 1. Update locally first (optimistic)
         await db.plannedExercises.update(id, data)
         const exercise = await db.plannedExercises.get(id)
 
-        // 2. Queue Sync
-        // Check if we have a pending create for this item? if so, no need to sync update yet?
-        // Actually, if we have pending create, we should technically update the body of that create.
-        // But for simplicity, we just queue a PUT. ID resolution will fix the URL if needed.
-        // Optimization: If pending create exists, update its body instead of queuing PUT?
-        // Let's keep it simple: Queue PUT. "Smart Deletion" handles delete. "Smart Update"?
-        // If pending create exists with temp ID, and we queue PUT with temp ID.
-        // Sync runs: POST succeeds -> returns real ID.
-        // Sync logic updates PUT url to real ID.
-        // PUT runs -> updates backend. Correct.
-
         if (exercise) {
+            // 2. Resolve the backend ID (remote_id if synced, or id if legacy MongoDB ID)
+            const isMongoObjectId = /^[a-f0-9]{24}$/.test(id)
+            const backendId = exercise.remote_id || (isMongoObjectId ? id : null)
+
+            // If not synced yet (no remote_id and not a legacy ID)
+            if (!backendId) {
+                // Option A: Find pending POST and merge the update into its body
+                const pendingCreate = await db.syncQueue
+                    .filter(item => item.context?.type === 'exercise_add' && item.context?.temp_id === id)
+                    .first()
+
+                if (pendingCreate && pendingCreate.body) {
+                    // Merge new data into the pending POST body
+                    const existingBody = JSON.parse(pendingCreate.body)
+                    const mergedBody = {
+                        ...existingBody,
+                        target_sets: exercise.target_sets,
+                        target_reps: exercise.target_reps,
+                        rest_seconds: exercise.rest_seconds,
+                        notes: exercise.notes,
+                        order: exercise.order
+                    }
+                    await db.syncQueue.update(pendingCreate.id, { body: JSON.stringify(mergedBody) })
+                    console.log(`[Sync] Merged update into pending POST for exercise ${id}`)
+                } else {
+                    console.log(`[Sync] No pending POST found for unsynced exercise ${id}, update stored locally only`)
+                }
+                return
+            }
+
+            // If already synced, queue a PUT with the backend ID
             const config = useRuntimeConfig()
             const baseUrl = config.public.apiBase || ''
 
             await queueSync({
                 method: 'PUT',
-                url: `${baseUrl}/v1/pro/exercises/${id}`,
-                body: {
+                url: `${baseUrl}/v1/pro/exercises/${backendId}`,
+                body: JSON.stringify({
                     target_sets: exercise.target_sets,
                     target_reps: exercise.target_reps,
                     rest_seconds: exercise.rest_seconds,
                     notes: exercise.notes,
                     order: exercise.order
-                },
+                }),
                 priority: 'normal',
                 context: {
                     type: 'exercise_update',
-                    exercise_id: id
+                    local_id: id,
+                    remote_id: backendId
                 }
             })
         }
@@ -336,7 +375,7 @@ export function useDatabase() {
     /**
      * Save a set log with automatic PB detection
      */
-    async function saveSetLog(log: Omit<SessionLog, 'id' | 'is_new_pb' | 'velocity_delta'>): Promise<SessionLog> {
+    async function saveSetLog(log: Omit<SessionLog, 'id' | 'remote_id' | 'sync_status' | 'is_new_pb' | 'velocity_delta'>): Promise<SessionLog> {
         if (!import.meta.client) throw new Error('Client-side only')
 
         // Get exercise for PB check
@@ -375,10 +414,12 @@ export function useDatabase() {
             .first()
 
         if (existing?.id) {
-            // Update existing log
+            // Update existing log - preserve dual-identity fields
             const updatedLog: SessionLog = {
                 ...log,
                 id: existing.id,
+                remote_id: existing.remote_id,
+                sync_status: existing.sync_status,
                 is_new_pb,
                 velocity_delta,
                 completed_at: log.completed ? new Date().toISOString() : undefined
@@ -390,6 +431,8 @@ export function useDatabase() {
             const newLog: SessionLog = {
                 ...log,
                 id: generateId(),
+                remote_id: null,
+                sync_status: 'pending',
                 is_new_pb,
                 velocity_delta,
                 completed_at: log.completed ? new Date().toISOString() : undefined
@@ -400,10 +443,28 @@ export function useDatabase() {
     }
 
     /**
-     * Save or update a schedule
+     * Save or update a schedule (with deduplication for dual-identity)
      */
     async function saveSchedule(schedule: Schedule): Promise<void> {
         if (!import.meta.client) return
+
+        // Deduplicate: If this has a remote_id, check if a record with that remote_id already exists
+        if (schedule.remote_id) {
+            const existing = await db.schedules
+                .filter(s => s.remote_id === schedule.remote_id)
+                .first()
+
+            if (existing && existing.id !== schedule.id) {
+                // A different record already has this remote_id, update it instead
+                console.log(`[Sync] Dedup: Updating existing ${existing.id} instead of creating ${schedule.id}`)
+                await db.schedules.update(existing.id, {
+                    ...schedule,
+                    id: existing.id // Keep the existing local ID
+                })
+                return
+            }
+        }
+
         await db.schedules.put(schedule)
     }
 
@@ -455,6 +516,8 @@ export function useDatabase() {
 
         const schedule: Schedule = {
             id: generateId(),
+            remote_id: null, // Will be populated after first sync
+            sync_status: 'pending',
             member_id: input.member_id,
             member_name: input.member_name,
             member_avatar: input.member_avatar,
@@ -541,11 +604,12 @@ export function useDatabase() {
         const config = useRuntimeConfig()
         const baseUrl = config.public.apiBase || ''
 
-        // 3. Queue for backend sync
+        // 3. Queue for backend sync (include client_id for dual-identity handshake)
         await queueSync({
             method: 'POST',
             url: `${baseUrl}/v1/pro/schedules`,
             body: JSON.stringify({
+                client_id: scheduleId, // Local ULID for identity handshake
                 member_id: input.member_id,
                 start_time: input.start_time,
                 session_goal: input.session_goal
@@ -576,50 +640,62 @@ export function useDatabase() {
     }
 
     /**
-     * Delete schedule with local-first + sync queue
+     * Delete schedule with local-first + sync queue (Dual-Identity aware)
      */
     async function deleteScheduleWithSync(scheduleId: string): Promise<void> {
         if (!import.meta.client) throw new Error('Client-side only')
 
-        // 1. Delete locally first (optimistic)
-        await deleteSchedule(scheduleId)
+        const entity = await db.schedules.get(scheduleId)
 
-        // 2. Check if there is a pending "create" request for this schedule
-        // If so, we can just remove the create request and skip the delete request
-        // This avoids the "offline create -> offline delete -> online sync fail" edge case
-        const pendingItems = await db.syncQueue.toArray()
-        const pendingCreate = pendingItems.find(item =>
-            item.context?.type === 'schedule_create' &&
-            item.context?.schedule_id === scheduleId
-        )
+        // Delete local associated data first
+        await db.plannedExercises.where('schedule_id').equals(scheduleId).delete()
+        await db.sessionLogs.where('schedule_id').equals(scheduleId).delete()
 
-        // Also check if ID mismatch (pending create might have temp ID, but here we might have backend ID?)
-        // Actually, if we are deleting locally, we used the ID from the object.
-        // If it was created offline, it has a temp ID. The pending Create has the same temp ID.
-        // If it was synced, it has a backend ID. The pending Create is gone.
-        // So simple ID match is sufficient.
-
-        if (pendingCreate) {
-            console.log(`[Database] Found pending create for ${scheduleId}, canceling both create and delete sync`)
-            await removeSyncItem(pendingCreate.id)
+        if (!entity) {
+            // Already deleted? Just clean up
+            await db.schedules.delete(scheduleId)
             return
         }
 
-        // 3. Get API base URL and Queue for backend sync
+        // Scenario A: Not synced yet (remote_id is null or undefined)
+        // Also check if id looks like a MongoDB ObjectID (legacy synced records before migration)
+        const isMongoObjectId = /^[a-f0-9]{24}$/.test(scheduleId)
+
+        if (!entity.remote_id && !isMongoObjectId) {
+            // Cancel pending POST in syncQueue
+            const pendingCreate = await db.syncQueue
+                .filter(item => item.context?.type === 'schedule_create' && item.context?.schedule_id === scheduleId)
+                .first()
+
+            if (pendingCreate) {
+                await removeSyncItem(pendingCreate.id)
+                console.log(`[Sync] Smart Deletion: Cancelled pending POST for schedule ${scheduleId}`)
+            }
+
+            // Delete locally
+            await db.schedules.delete(scheduleId)
+            return
+        }
+
+        // Scenario B: Already synced (remote_id exists OR legacy MongoDB ObjectID)
+        await db.schedules.delete(scheduleId)
+
+        // Queue DELETE using remote_id (or id for legacy records)
         const config = useRuntimeConfig()
         const baseUrl = config.public.apiBase || ''
+        const deleteId = entity.remote_id || scheduleId // Use remote_id if available, else fallback to id
 
         await queueSync({
             method: 'DELETE',
-            url: `${baseUrl}/v1/pro/schedules/${scheduleId}`,
+            url: `${baseUrl}/v1/pro/schedules/${deleteId}`,
             priority: 'high',
             context: {
-                schedule_id: scheduleId,
-                type: 'schedule_delete'
+                type: 'schedule_delete',
+                local_id: scheduleId,
+                remote_id: deleteId
             }
         })
-
-        console.log(`[Database] Queued schedule ${scheduleId} for delete sync`)
+        console.log(`[Sync] Queued DELETE for schedule ${scheduleId} (remote: ${deleteId})`)
     }
 
     /**
@@ -782,69 +858,29 @@ export function useDatabase() {
                     })
 
                     if (response.ok) {
-                        // Handle schedule creation - update local ID with backend ID
+                        // Handle schedule creation - populate remote_id (Dual-Identity)
                         if (item.method === 'POST' && item.context?.type === 'schedule_create') {
                             try {
                                 const backendSchedule = await response.json()
                                 const localId = item.context.schedule_id
-                                if (backendSchedule.id && localId && backendSchedule.id !== localId) {
-                                    // Get the local schedule, update its ID to match backend
-                                    const localSchedule = await db.schedules.get(localId)
-                                    if (localSchedule) {
-                                        // Delete old record and insert with new ID
-                                        await db.schedules.delete(localId)
-                                        localSchedule.id = backendSchedule.id
-                                        await db.schedules.put(localSchedule)
-                                        console.log(`[SyncQueue] Updated schedule ID: ${localId} → ${backendSchedule.id}`)
+                                if (backendSchedule.id && localId) {
+                                    await db.schedules.update(localId, {
+                                        remote_id: backendSchedule.id,
+                                        sync_status: 'synced'
+                                    })
+                                    console.log(`[Sync] Linked schedule: ${localId} → ${backendSchedule.id}`)
 
-                                        // URL Replacement: If user is viewing this schedule, update URL
-                                        if (import.meta.client && router && route) {
-                                            // Check if we are on a route that uses this ID (e.g. /sessions/:id)
-                                            // The route param might be named 'id'
-                                            if (route.params.id === localId) {
-                                                console.log(`[SyncQueue] Redirecting to new ID: ${backendSchedule.id}`)
-                                                router.replace({
-                                                    params: { ...route.params, id: backendSchedule.id },
-                                                    query: route.query
-                                                })
-                                            }
-                                        }
+                                    // CRITICAL: Update all pending exercise_add items to use the new MongoDB ID
+                                    // These were queued before the schedule synced, so they have ULID in URL
+                                    const pendingExercises = await db.syncQueue
+                                        .filter(q => q.context?.type === 'exercise_add' && q.context?.schedule_id === localId)
+                                        .toArray()
 
-                                        // ---------------------------------------------------------
-                                        // CRITICAL: Update pending sync items that reference the old ID
-                                        // This handles the case where user deletes/modifies an item offline
-                                        // before it has been synced (and thus has a temp ID)
-                                        // ---------------------------------------------------------
-                                        const pendingItems = await db.syncQueue.toArray()
-                                        for (const pending of pendingItems) {
-                                            // Skip the current item (it's being removed anyway)
-                                            if (pending.id === item.id) continue
-
-                                            let modified = false
-
-                                            // 1. Update URL (e.g. DELETE /schedules/OLD_ID)
-                                            if (pending.url.includes(localId)) {
-                                                pending.url = pending.url.replace(localId, backendSchedule.id)
-                                                modified = true
-                                            }
-
-                                            // 2. Update Body (e.g. nested ID references)
-                                            if (pending.body && typeof pending.body === 'string' && pending.body.includes(localId)) {
-                                                pending.body = pending.body.replace(new RegExp(localId, 'g'), backendSchedule.id)
-                                                modified = true
-                                            }
-
-                                            // 3. Update Context
-                                            if (pending.context?.schedule_id === localId) {
-                                                pending.context.schedule_id = backendSchedule.id
-                                                modified = true
-                                            }
-
-                                            if (modified) {
-                                                await db.syncQueue.put(pending)
-                                                console.log(`[SyncQueue] Resolved optimistic ID in pending item ${pending.id}`)
-                                            }
-                                        }
+                                    for (const pendingEx of pendingExercises) {
+                                        // Update URL: replace ULID with MongoDB ID
+                                        const newUrl = pendingEx.url.replace(localId, backendSchedule.id)
+                                        await db.syncQueue.update(pendingEx.id, { url: newUrl })
+                                        console.log(`[Sync] Fixed pending exercise URL: ${localId} → ${backendSchedule.id}`)
                                     }
                                 }
                             } catch (parseErr) {
@@ -852,62 +888,17 @@ export function useDatabase() {
                             }
                         }
 
-                        // Handle exercise creation - update local ID with backend ID
+                        // Handle exercise creation - populate remote_id (Dual-Identity)
                         if (item.method === 'POST' && item.context?.type === 'exercise_add') {
                             try {
                                 const backendEx = await response.json()
                                 const localId = item.context.temp_id
-
-                                if (backendEx.id && localId && backendEx.id !== localId) {
-                                    console.log(`[SyncQueue] Updating exercise ID: ${localId} → ${backendEx.id}`)
-
-                                    // 1. Update PlannedExercise
-                                    const localEx = await db.plannedExercises.get(localId)
-                                    if (localEx) {
-                                        await db.plannedExercises.delete(localId)
-                                        localEx.id = backendEx.id
-                                        await db.plannedExercises.put(localEx)
-                                    }
-
-                                    // 2. Update SessionLogs (Foreign Key)
-                                    // Note: modify() on failing where clause might need explicit iterate? 
-                                    // Dexie modify should work.
-                                    await db.sessionLogs.where('exercise_id').equals(localId).modify({ exercise_id: backendEx.id })
-
-                                    // 3. Update Pending Sync Items
-                                    const pendingItems = await db.syncQueue.toArray()
-                                    for (const pending of pendingItems) {
-                                        if (pending.id === item.id) continue
-                                        let modified = false
-
-                                        // Update Body strings (e.g. exercise_ulid -> id)
-                                        if (pending.body && typeof pending.body === 'string' && pending.body.includes(localId)) {
-                                            pending.body = pending.body.replace(new RegExp(localId, 'g'), backendEx.id)
-                                            modified = true
-                                        }
-
-                                        // Update URL
-                                        if (pending.url.includes(localId)) {
-                                            pending.url = pending.url.replace(localId, backendEx.id)
-                                            modified = true
-                                        }
-
-                                        if (modified) {
-                                            await db.syncQueue.put(pending)
-                                            console.log(`[SyncQueue] Resolved optimistic ID in pending item ${pending.id}`)
-
-                                            // CRITICAL: Update the item in the current processing batch (in-memory array)
-                                            // so that if this item is processed in the same loop, it uses the new ID
-                                            const batchItem = items.find(i => i.id === pending.id)
-                                            if (batchItem) {
-                                                batchItem.url = pending.url
-                                                batchItem.body = pending.body
-                                                if (batchItem.context && batchItem.context.exercise_id === localId) {
-                                                    batchItem.context.exercise_id = backendEx.id
-                                                }
-                                            }
-                                        }
-                                    }
+                                if (backendEx.id && localId) {
+                                    await db.plannedExercises.update(localId, {
+                                        remote_id: backendEx.id,
+                                        sync_status: 'synced'
+                                    })
+                                    console.log(`[Sync] Linked exercise: ${localId} → ${backendEx.id}`)
                                 }
                             } catch (e) {
                                 console.error('[SyncQueue] Failed to update local exercise IDs:', e)
