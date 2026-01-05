@@ -16,6 +16,10 @@ export function useDatabase() {
     // REACTIVE QUERIES
     // ============================================
 
+    // Capture router context for background sync redirects
+    const router = import.meta.client ? useRouter() : null
+    const route = import.meta.client ? useRoute() : null
+
     /**
      * Get today's schedules as a reactive query
      */
@@ -165,11 +169,126 @@ export function useDatabase() {
     }
 
     /**
+     * Add a planned exercise with sync
+     */
+    async function addPlannedExerciseWithSync(exercise: Omit<PlannedExercise, 'id'>): Promise<string> {
+        if (!import.meta.client) throw new Error('Client-side only')
+
+        // 1. Save locally with temp ID
+        // Note: generateId is usually ulid() or similar. 
+        // Existing code uses generateId() or ulid()? Let's check imports or other usages. 
+        // Previous view showed `const id = generateId()` in addPlannedExercise. so use that.
+        const id = generateId()
+        await db.plannedExercises.add({ ...exercise, id })
+
+        // 2. Queue Sync
+        const config = useRuntimeConfig()
+        const baseUrl = config.public.apiBase || ''
+
+        await queueSync({
+            method: 'POST',
+            url: `${baseUrl}/v1/pro/schedules/${exercise.schedule_id}/exercises`,
+            body: JSON.stringify({
+                exercise_id: exercise.exercise_id,
+                target_sets: exercise.target_sets,
+                target_reps: exercise.target_reps,
+                rest_seconds: exercise.rest_seconds,
+                notes: exercise.notes,
+                order: exercise.order
+            }),
+            priority: 'normal',
+            context: {
+                type: 'exercise_add',
+                temp_id: id,
+                schedule_id: exercise.schedule_id
+            }
+        })
+
+        return id
+    }
+
+    /**
+     * Remove a planned exercise with sync
+     */
+    async function removePlannedExerciseWithSync(id: string): Promise<void> {
+        if (!import.meta.client) return
+
+        const ex = await db.plannedExercises.get(id)
+        // If not found, maybe already deleted? Just return.
+
+        // 1. Remove locally
+        await db.plannedExercises.delete(id)
+
+        // 2. Check for pending create (Smart Deletion)
+        const pendingItems = await db.syncQueue.toArray()
+        const pendingCreate = pendingItems.find(item =>
+            item.context?.type === 'exercise_add' &&
+            item.context?.temp_id === id
+        )
+
+        if (pendingCreate) {
+            console.log(`[Database] Smart Deletion: Cancelled pending create for exercise ${id}`)
+            await removeSyncItem(pendingCreate.id)
+            return
+        }
+
+        // 3. Queue Delete
+        const config = useRuntimeConfig()
+        const baseUrl = config.public.apiBase || ''
+
+        await queueSync({
+            method: 'DELETE',
+            url: `${baseUrl}/v1/pro/exercises/${id}`,
+            priority: 'normal',
+            context: {
+                type: 'exercise_remove',
+                exercise_id: id
+            }
+        })
+    }
+
+    /**
      * Update a planned exercise
      */
-    async function updatePlannedExercise(id: string, data: Partial<PlannedExercise>): Promise<void> {
+    async function updatePlannedExerciseWithSync(id: string, data: Partial<PlannedExercise>): Promise<void> {
         if (!import.meta.client) return
+
+        // 1. Update locally
         await db.plannedExercises.update(id, data)
+        const exercise = await db.plannedExercises.get(id)
+
+        // 2. Queue Sync
+        // Check if we have a pending create for this item? if so, no need to sync update yet?
+        // Actually, if we have pending create, we should technically update the body of that create.
+        // But for simplicity, we just queue a PUT. ID resolution will fix the URL if needed.
+        // Optimization: If pending create exists, update its body instead of queuing PUT?
+        // Let's keep it simple: Queue PUT. "Smart Deletion" handles delete. "Smart Update"?
+        // If pending create exists with temp ID, and we queue PUT with temp ID.
+        // Sync runs: POST succeeds -> returns real ID.
+        // Sync logic updates PUT url to real ID.
+        // PUT runs -> updates backend. Correct.
+
+        if (exercise) {
+            const config = useRuntimeConfig()
+            const baseUrl = config.public.apiBase || ''
+
+            await queueSync({
+                method: 'PUT',
+                url: `${baseUrl}/v1/pro/exercises/${id}`,
+                body: {
+                    target_sets: exercise.target_sets,
+                    target_reps: exercise.target_reps,
+                    rest_seconds: exercise.rest_seconds,
+                    notes: exercise.notes,
+                    order: exercise.order
+                },
+                priority: 'normal',
+                context: {
+                    type: 'exercise_update',
+                    exercise_id: id
+                }
+            })
+        }
     }
 
     /**
@@ -224,14 +343,21 @@ export function useDatabase() {
         let is_new_pb = false
         let velocity_delta: number | undefined
 
-        const exercise = await db.exercises.get(log.exercise_id)
+        // Resolve Library ID from Planned Exercise (log.exercise_id is Planned ID)
+        let libraryId = log.exercise_id
+        const planned = await db.plannedExercises.get(log.exercise_id)
+        if (planned) {
+            libraryId = planned.exercise_id
+        }
+
+        const exercise = await db.exercises.get(libraryId)
         if (exercise && log.weight) {
             is_new_pb = checkIfNewPB(log.weight, exercise.personal_best_weight)
             velocity_delta = calculateVelocityDelta(log.weight, exercise.last_3_weights_history)
 
             // Update exercise PB if new record
             if (is_new_pb) {
-                await db.exercises.update(log.exercise_id, {
+                await db.exercises.update(libraryId, {
                     personal_best_weight: log.weight,
                     last_3_weights_history: [
                         ...exercise.last_3_weights_history.slice(-2),
@@ -671,6 +797,19 @@ export function useDatabase() {
                                         await db.schedules.put(localSchedule)
                                         console.log(`[SyncQueue] Updated schedule ID: ${localId} → ${backendSchedule.id}`)
 
+                                        // URL Replacement: If user is viewing this schedule, update URL
+                                        if (import.meta.client && router && route) {
+                                            // Check if we are on a route that uses this ID (e.g. /sessions/:id)
+                                            // The route param might be named 'id'
+                                            if (route.params.id === localId) {
+                                                console.log(`[SyncQueue] Redirecting to new ID: ${backendSchedule.id}`)
+                                                router.replace({
+                                                    params: { ...route.params, id: backendSchedule.id },
+                                                    query: route.query
+                                                })
+                                            }
+                                        }
+
                                         // ---------------------------------------------------------
                                         // CRITICAL: Update pending sync items that reference the old ID
                                         // This handles the case where user deletes/modifies an item offline
@@ -710,6 +849,68 @@ export function useDatabase() {
                                 }
                             } catch (parseErr) {
                                 console.warn('[SyncQueue] Could not parse schedule response:', parseErr)
+                            }
+                        }
+
+                        // Handle exercise creation - update local ID with backend ID
+                        if (item.method === 'POST' && item.context?.type === 'exercise_add') {
+                            try {
+                                const backendEx = await response.json()
+                                const localId = item.context.temp_id
+
+                                if (backendEx.id && localId && backendEx.id !== localId) {
+                                    console.log(`[SyncQueue] Updating exercise ID: ${localId} → ${backendEx.id}`)
+
+                                    // 1. Update PlannedExercise
+                                    const localEx = await db.plannedExercises.get(localId)
+                                    if (localEx) {
+                                        await db.plannedExercises.delete(localId)
+                                        localEx.id = backendEx.id
+                                        await db.plannedExercises.put(localEx)
+                                    }
+
+                                    // 2. Update SessionLogs (Foreign Key)
+                                    // Note: modify() on failing where clause might need explicit iterate? 
+                                    // Dexie modify should work.
+                                    await db.sessionLogs.where('exercise_id').equals(localId).modify({ exercise_id: backendEx.id })
+
+                                    // 3. Update Pending Sync Items
+                                    const pendingItems = await db.syncQueue.toArray()
+                                    for (const pending of pendingItems) {
+                                        if (pending.id === item.id) continue
+                                        let modified = false
+
+                                        // Update Body strings (e.g. exercise_ulid -> id)
+                                        if (pending.body && typeof pending.body === 'string' && pending.body.includes(localId)) {
+                                            pending.body = pending.body.replace(new RegExp(localId, 'g'), backendEx.id)
+                                            modified = true
+                                        }
+
+                                        // Update URL
+                                        if (pending.url.includes(localId)) {
+                                            pending.url = pending.url.replace(localId, backendEx.id)
+                                            modified = true
+                                        }
+
+                                        if (modified) {
+                                            await db.syncQueue.put(pending)
+                                            console.log(`[SyncQueue] Resolved optimistic ID in pending item ${pending.id}`)
+
+                                            // CRITICAL: Update the item in the current processing batch (in-memory array)
+                                            // so that if this item is processed in the same loop, it uses the new ID
+                                            const batchItem = items.find(i => i.id === pending.id)
+                                            if (batchItem) {
+                                                batchItem.url = pending.url
+                                                batchItem.body = pending.body
+                                                if (batchItem.context && batchItem.context.exercise_id === localId) {
+                                                    batchItem.context.exercise_id = backendEx.id
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch (e) {
+                                console.error('[SyncQueue] Failed to update local exercise IDs:', e)
                             }
                         }
 
@@ -854,9 +1055,12 @@ export function useDatabase() {
 
         // Planned Exercise CRUD
         addPlannedExercise,
+        addPlannedExerciseWithSync,
         removePlannedExercise,
+        removePlannedExerciseWithSync,
         removePlannedExerciseByKeys,
-        updatePlannedExercise,
+        updatePlannedExercise: updatePlannedExerciseWithSync, // Alias for backward compatibility if needed, or just rename
+        updatePlannedExerciseWithSync,
         updatePlannedExerciseByKeys,
         seedPlannedExercises,
 

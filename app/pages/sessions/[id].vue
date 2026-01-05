@@ -2,7 +2,7 @@
 import type { PlannedExercise } from '~/utils/db'
 
 const route = useRoute()
-const sessionId = route.params.id as string
+const sessionId = computed(() => route.params.id as string)
 
 // Database composable
 const { 
@@ -10,12 +10,14 @@ const {
   fetchPlannedExercises, 
   getExercisePBs,
   saveSetLog: dbSaveSetLog,
-  removePlannedExercise
+  removePlannedExerciseWithSync,
+  addPlannedExerciseWithSync,
+  updatePlannedExercise
 } = useDatabase()
 
 // Session Data (loaded from database)
 const session = ref({
-  id: sessionId,
+  id: sessionId.value,
   memberName: 'Loading...',
   goal: '',
   startTime: '',
@@ -23,8 +25,10 @@ const session = ref({
 })
 
 // Exercise Data (loaded from database)
+// Exercise Data (loaded from database)
 const exercises = ref<Array<{
-  id: string
+  id: string // Planned Exercise ID (unique instance)
+  exerciseId: string // Library Exercise ID (for reference/PB)
   name: string
   targetSets: number
   targetReps: number
@@ -44,7 +48,7 @@ async function loadSessionData() {
   
   try {
     // Load schedule
-    const schedule = await getSchedule(sessionId)
+    const schedule = await getSchedule(sessionId.value)
     if (schedule) {
       session.value = {
         id: schedule.id,
@@ -60,9 +64,10 @@ async function loadSessionData() {
     }
 
     // Load planned exercises
-    const planned = await fetchPlannedExercises(sessionId)
+    const planned = await fetchPlannedExercises(sessionId.value)
     exercises.value = planned.map(ex => ({
-      id: ex.exercise_id,
+      id: ex.id!, // Planned ID (Definite assignment as they come from DB)
+      exerciseId: ex.exercise_id, // Library ID
       name: ex.name,
       targetSets: ex.target_sets,
       targetReps: ex.target_reps,
@@ -79,7 +84,7 @@ async function loadSessionData() {
     // Initialize set logs after loading exercises
     initializeSetLogs()
     
-    console.log(`[Session] Loaded ${exercises.value.length} exercises for session ${sessionId}`)
+    console.log(`[Session] Loaded ${exercises.value.length} exercises for session ${sessionId.value}`)
   } catch (error) {
     console.error('[Session] Failed to load session data:', error)
   } finally {
@@ -91,6 +96,15 @@ onMounted(async () => {
   await loadSessionData()
   await loadPersistedLogs()
   await initLibrary()
+})
+
+// React to ID changes (e.g. after sync updates ULID -> ObjectId)
+watch(sessionId, async (newId) => {
+  if (newId) {
+    console.log('[Session] ID changed, reloading data:', newId)
+    await loadSessionData()
+    await loadPersistedLogs()
+  }
 })
 
 // Set Logs State - tracks weight/reps/completed for each set
@@ -121,7 +135,7 @@ async function loadPersistedLogs() {
   if (!import.meta.client) return
   
   const { db } = await import('~/utils/db')
-  const scheduleId = sessionId as string
+  const scheduleId = sessionId.value
   
   try {
     const persistedLogs = await db.sessionLogs
@@ -163,7 +177,7 @@ async function persistSetLog(exerciseId: string, setIndex: number) {
   
   try {
     await dbSaveSetLog({
-      schedule_id: sessionId as string,
+      schedule_id: sessionId.value,
       exercise_id: exerciseId,
       exercise_name: exercise.name,
       set_index: setIndex,
@@ -209,28 +223,28 @@ function getPB(exerciseId: string): number {
 }
 
 // Delete an exercise from the session
-async function deleteExercise(exerciseId: string) {
+async function deleteExercise(plannedExerciseId: string) {
   const toast = useToast()
   
-  // Find the planned exercise by exercise_id
-  const planned = await fetchPlannedExercises(sessionId)
-  const toDelete = planned.find(ex => ex.exercise_id === exerciseId)
+  // Find the exercise name for toast
+  const exercise = exercises.value.find(ex => ex.id === plannedExerciseId)
   
-  if (toDelete?.id) {
-    await removePlannedExercise(toDelete.id)
+  if (exercise) {
+    // Remove from DB with sync
+    await removePlannedExerciseWithSync(plannedExerciseId)
     
     // Remove from local state
-    exercises.value = exercises.value.filter(ex => ex.id !== exerciseId)
-    delete setLogs.value[exerciseId]
+    exercises.value = exercises.value.filter(ex => ex.id !== plannedExerciseId)
+    delete setLogs.value[plannedExerciseId]
     
     toast.add({
       title: 'Exercise Removed',
-      description: `${toDelete.name} has been removed from this session.`,
+      description: `${exercise.name} has been removed from this session.`,
       icon: 'i-heroicons-trash',
       color: 'neutral'
     })
     
-    console.log(`[Session] Deleted exercise ${exerciseId}`)
+    console.log(`[Session] Deleted exercise ${plannedExerciseId}`)
   }
 }
 
@@ -274,7 +288,7 @@ async function startSession() {
   const toast = useToast()
   
   try {
-    await updateScheduleStatus(sessionId, 'in-progress')
+    await updateScheduleStatus(sessionId.value, 'in-progress')
     session.value.status = 'in-progress'
     toast.add({
       title: 'Session Started',
@@ -335,13 +349,11 @@ const exerciseOptions = computed(() => {
 async function addExercise() {
   if (!selectedExercise.value) return
   
-  const { addPlannedExercise } = useDatabase()
-  
   const newOrder = exercises.value.length + 1
   
-  // Add to database
-  await addPlannedExercise({
-    schedule_id: sessionId,
+  // Add to database with sync -> Returns Planned ID
+  const plannedId = await addPlannedExerciseWithSync({
+    schedule_id: sessionId.value,
     exercise_id: selectedExercise.value.id,
     name: selectedExercise.value.name,
     target_sets: newExerciseSets.value,
@@ -351,9 +363,10 @@ async function addExercise() {
     order: newOrder
   })
   
-  // Add to local state
+  // Add to local state using the new Planned ID
   exercises.value.push({
-    id: selectedExercise.value.id,
+    id: plannedId,
+    exerciseId: selectedExercise.value.id,
     name: selectedExercise.value.name,
     targetSets: newExerciseSets.value,
     targetReps: newExerciseReps.value,
@@ -362,7 +375,7 @@ async function addExercise() {
   })
   
   // Initialize set logs for the new exercise
-  setLogs.value[selectedExercise.value.id] = Array.from({ length: newExerciseSets.value }, () => ({
+  setLogs.value[plannedId] = Array.from({ length: newExerciseSets.value }, () => ({
     weight: null,
     reps: null,
     completed: false
@@ -392,8 +405,8 @@ async function updateExercisePlan(exerciseId: string, field: string, value: numb
   
   // Persist to IndexedDB
   try {
-    const { updatePlannedExerciseByKeys } = useDatabase()
-    await updatePlannedExerciseByKeys(sessionId, exerciseId, { [field === 'targetSets' ? 'target_sets' : field === 'targetReps' ? 'target_reps' : field === 'restSeconds' ? 'rest_seconds' : field]: value })
+    const { updatePlannedExerciseWithSync } = useDatabase()
+    await updatePlannedExerciseWithSync(exerciseId, { [field === 'targetSets' ? 'target_sets' : field === 'targetReps' ? 'target_reps' : field === 'restSeconds' ? 'rest_seconds' : field]: value })
     console.log(`[Session] Updated ${field} for exercise ${exerciseId}`)
   } catch (error) {
     console.error('[Session] Failed to update exercise:', error)
@@ -401,20 +414,22 @@ async function updateExercisePlan(exerciseId: string, field: string, value: numb
 }
 
 // Remove exercise from plan (for preview mode)
-async function removeExerciseFromPlan(exerciseId: string) {
+async function removeExerciseFromPlan(plannedExerciseId: string) {
   const toast = useToast()
   
   try {
+    // Determine exercise name before deleting (finding by ID is simpler now)
+    const exercise = exercises.value.find(ex => ex.id === plannedExerciseId)
+    const exerciseName = exercise?.name || 'Exercise'
+
     // Remove from local state
-    const exerciseName = exercises.value.find(ex => ex.id === exerciseId)?.name || 'Exercise'
-    exercises.value = exercises.value.filter(ex => ex.id !== exerciseId)
+    exercises.value = exercises.value.filter(ex => ex.id !== plannedExerciseId)
     
-    // Remove from IndexedDB
-    const { removePlannedExerciseByKeys } = useDatabase()
-    await removePlannedExerciseByKeys(sessionId, exerciseId)
+    // Remove from DB with Sync
+    await removePlannedExerciseWithSync(plannedExerciseId)
     
     // Also remove set logs
-    delete setLogs.value[exerciseId]
+    delete setLogs.value[plannedExerciseId]
     
     toast.add({
       title: 'Exercise Removed',
@@ -423,7 +438,7 @@ async function removeExerciseFromPlan(exerciseId: string) {
       color: 'warning'
     })
     
-    console.log(`[Session] Removed exercise ${exerciseId} from plan`)
+    console.log(`[Session] Removed exercise ${plannedExerciseId} from plan`)
   } catch (error) {
     console.error('[Session] Failed to remove exercise:', error)
     toast.add({
@@ -496,7 +511,7 @@ async function completeFinalFinish() {
   const toast = useToast()
   const { updateScheduleStatus, queueSync, isOnline } = useDatabase()
   
-  const scheduleId = sessionId as string
+  const scheduleId = sessionId.value
 
   // Phase A: Optimistic - Update local state immediately
   try {
