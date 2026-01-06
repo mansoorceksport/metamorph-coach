@@ -167,6 +167,20 @@ async function handleDeleteSchedule() {
   }
 }
 
+// Status priority for sorting (lower = higher priority)
+const statusPriority: Record<string, number> = {
+  'in-progress': 0,
+  'scheduled': 1,
+  'pending_confirmation': 2,
+  'completed': 3,
+  'cancelled': 4,
+  'no-show': 5
+}
+
+function getStatusPriority(status: string): number {
+  return statusPriority[status] ?? 99
+}
+
 // Filtered schedules
 const filteredSchedules = computed(() => {
   let result = [...schedules.value]
@@ -188,8 +202,12 @@ const filteredSchedules = computed(() => {
     result = result.filter(s => s.status === selectedStatus.value)
   }
   
-  // Sort by start time
-  result.sort((a, b) => new Date(a.start_time).getTime() - new Date(b.start_time).getTime())
+  // Sort by status priority (in-progress > scheduled > completed), then by start time
+  result.sort((a, b) => {
+    const priorityDiff = getStatusPriority(a.status) - getStatusPriority(b.status)
+    if (priorityDiff !== 0) return priorityDiff
+    return new Date(a.start_time).getTime() - new Date(b.start_time).getTime()
+  })
   
   return result
 })

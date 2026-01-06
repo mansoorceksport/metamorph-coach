@@ -89,10 +89,35 @@ async function loadSessionData() {
       notes: ex.notes
     }))
 
-    // Load PBs for these exercises
-    const exerciseIds = planned.map(ex => ex.exercise_id)
-    if (exerciseIds.length > 0) {
-      exercisePBs.value = await getExercisePBs(exerciseIds)
+    // Load PBs from backend for this member
+    if (schedule?.member_id) {
+      try {
+        const token = useCookie('metamorph-token')
+        const headers: Record<string, string> = {}
+        if (token.value) {
+          headers['Authorization'] = `Bearer ${token.value}`
+        }
+        
+        const pbs = await $fetch<{ exercise_id: string; weight: number }[]>(
+          `/api/v1/pro/members/${schedule.member_id}/pbs`,
+          { headers }
+        )
+        
+        // Map to exercisePBs: { [exerciseId]: weight }
+        exercisePBs.value = pbs.reduce((acc, pb) => {
+          acc[pb.exercise_id] = pb.weight
+          return acc
+        }, {} as Record<string, number>)
+        
+        console.log(`[Session] Loaded ${pbs.length} PBs for member ${schedule.member_id}`)
+      } catch (error) {
+        console.warn('[Session] Failed to fetch PBs from backend:', error)
+        // Fallback to local (if any)
+        const exerciseIds = planned.map(ex => ex.exercise_id)
+        if (exerciseIds.length > 0) {
+          exercisePBs.value = await getExercisePBs(exerciseIds)
+        }
+      }
     }
 
     // Initialize set logs after loading exercises
@@ -590,7 +615,7 @@ const sessionImprovements = computed(() => {
   
   exercises.value.forEach(ex => {
     const logs = setLogs.value[ex.id] || []
-    const pb = getPB(ex.id)
+    const pb = getPB(ex.exerciseId)
     
     // Check for PB improvements
     logs.forEach((log, index) => {
@@ -1055,9 +1080,9 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
               Target: {{ exercise.targetSets }} sets × {{ exercise.targetReps }} reps
               <span v-if="exercise.restSeconds" class="ml-2">• {{ exercise.restSeconds }}s rest</span>
             </p>
-            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 text-xs font-medium">
+            <span v-if="getPB(exercise.exerciseId) > 0" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 text-xs font-medium">
               <UIcon name="i-heroicons-trophy" class="w-3 h-3" />
-              PB: {{ getPB(exercise.id) }}kg
+              PB: {{ getPB(exercise.exerciseId) }}kg
             </span>
             <span class="text-sm font-medium text-primary-600 dark:text-primary-400 ml-auto">
               {{ getExerciseProgress(exercise.id).completed }}/{{ getExerciseProgress(exercise.id).total }} sets
@@ -1119,7 +1144,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
                     leave-to-class="opacity-0 scale-75"
                   >
                     <div 
-                      v-if="isNewPB(exercise.id, setLog.weight)"
+                      v-if="isNewPB(exercise.exerciseId, setLog.weight)"
                       class="absolute -top-2 -right-2 px-2 py-0.5 bg-green-500 text-white text-xs font-bold rounded-full shadow-lg animate-pulse"
                     >
                       🔥 NEW PB

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { db } from '~/utils/db'
+import { liveQuery } from 'dexie'
 
 // Load schedules from IndexedDB
 const todaysSessions = ref<Array<{
@@ -12,43 +13,67 @@ const todaysSessions = ref<Array<{
 
 const isLoadingSchedules = ref(true)
 
-onMounted(async () => {
+// Status priority for sorting (lower = higher priority)
+const statusPriority: Record<string, number> = {
+  'in-progress': 0,
+  'scheduled': 1,
+  'pending_confirmation': 2,
+  'completed': 3,
+  'cancelled': 4,
+  'no-show': 5
+}
+
+function getStatusPriority(status: string): number {
+  return statusPriority[status] ?? 99
+}
+
+// Use liveQuery for reactivity - schedules will update when data changes
+onMounted(() => {
   if (!import.meta.client) return
   
-  try {
-    // Load schedules from Dexie
-    const allSchedules = await db.schedules.toArray()
-    
-    // Get today's date (start and end of day)
-    const today = new Date()
-    const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate())
-    const endOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1)
-    
-    // Filter to only today's schedules
-    const todaysSchedules = allSchedules.filter(schedule => {
-      const scheduleDate = new Date(schedule.start_time)
-      return scheduleDate >= startOfToday && scheduleDate < endOfToday
-    })
-    
-    // Transform to display format
-    todaysSessions.value = todaysSchedules.map(schedule => ({
-      id: schedule.id,
-      time: new Date(schedule.start_time).toLocaleTimeString('en-US', { 
-        hour: '2-digit', 
-        minute: '2-digit',
-        hour12: true 
-      }),
-      clientName: schedule.member_name,
-      type: schedule.session_goal || 'Training Session',
-      status: schedule.status
-    }))
-    
-    console.log(`[CommandCenter] Found ${todaysSchedules.length} sessions for today (${startOfToday.toDateString()})`)
-  } catch (error) {
-    console.error('[CommandCenter] Failed to load schedules:', error)
-  } finally {
-    isLoadingSchedules.value = false
-  }
+  const today = new Date()
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+  const endOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1)
+  
+  const subscription = liveQuery(async () => {
+    return await db.schedules.toArray()
+  }).subscribe({
+    next: (allSchedules) => {
+      // Filter to only today's schedules
+      const todaysSchedules = allSchedules.filter(schedule => {
+        const scheduleDate = new Date(schedule.start_time)
+        return scheduleDate >= startOfToday && scheduleDate < endOfToday
+      })
+      
+      // Sort by status priority (in-progress > scheduled > completed)
+      todaysSchedules.sort((a, b) => getStatusPriority(a.status) - getStatusPriority(b.status))
+      
+      // Transform to display format
+      todaysSessions.value = todaysSchedules.map(schedule => ({
+        id: schedule.id,
+        time: new Date(schedule.start_time).toLocaleTimeString('en-US', { 
+          hour: '2-digit', 
+          minute: '2-digit',
+          hour12: true 
+        }),
+        clientName: schedule.member_name,
+        type: schedule.session_goal || 'Training Session',
+        status: schedule.status
+      }))
+      
+      console.log(`[CommandCenter] Found ${todaysSchedules.length} sessions for today (${startOfToday.toDateString()})`)
+      isLoadingSchedules.value = false
+    },
+    error: (error) => {
+      console.error('[CommandCenter] Failed to load schedules:', error)
+      isLoadingSchedules.value = false
+    }
+  })
+  
+  // Cleanup on unmount
+  onUnmounted(() => {
+    subscription.unsubscribe()
+  })
 })
 
 // Mock Data for Analytics

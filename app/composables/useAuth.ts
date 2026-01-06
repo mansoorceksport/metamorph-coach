@@ -134,8 +134,8 @@ export const useAuth = () => {
 
             user.value = result.user
 
-            // Sync user data in the background after successful login
-            syncUserData()
+            // Await user data sync to ensure data is ready when user reaches dashboard
+            await syncUserData()
 
             return result.user
         } catch (err: any) {
