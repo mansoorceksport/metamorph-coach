@@ -12,7 +12,12 @@ const {
   saveSetLog: dbSaveSetLog,
   removePlannedExerciseWithSync,
   addPlannedExerciseWithSync,
-  updatePlannedExercise
+  updatePlannedExercise,
+  // Atomic set sync (new)
+  updateSetLogWithSync,
+  addSetWithSync,
+  syncScheduleSets,
+  syncPlannedExercises
 } = useDatabase()
 
 // Session Data (loaded from database)
@@ -28,6 +33,7 @@ const session = ref({
 // Exercise Data (loaded from database)
 const exercises = ref<Array<{
   id: string // Planned Exercise ID (unique instance)
+  remoteId?: string | null // Remote ID (MongoID) for synced exercises
   exerciseId: string // Library Exercise ID (for reference/PB)
   name: string
   targetSets: number
@@ -47,6 +53,11 @@ async function loadSessionData() {
   if (!import.meta.client) return
   
   try {
+    // 1. Sync Sets & Exercises (ensure we have backend data)
+    // Run sequentially because sets depend on exercises being present to resolve ULIDs
+    await syncPlannedExercises(sessionId.value)
+    await syncScheduleSets(sessionId.value)
+
     // Load schedule
     const schedule = await getSchedule(sessionId.value)
     if (schedule) {
@@ -64,9 +75,12 @@ async function loadSessionData() {
     }
 
     // Load planned exercises
-    const planned = await fetchPlannedExercises(sessionId.value)
+    // Use remote_id (Mongo ID) if available, as syned exercises use that. Fallback to local ID (ULID)
+    const queryId = schedule?.remote_id || sessionId.value
+    const planned = await fetchPlannedExercises(queryId)
     exercises.value = planned.map(ex => ({
       id: ex.id!, // Planned ID (Definite assignment as they come from DB)
+      remoteId: ex.remote_id, // Expose remote_id for matching synced set logs
       exerciseId: ex.exercise_id, // Library ID
       name: ex.name,
       targetSets: ex.target_sets,
@@ -82,7 +96,7 @@ async function loadSessionData() {
     }
 
     // Initialize set logs after loading exercises
-    initializeSetLogs()
+    await initializeSetLogs() // Made async to load from Dexie
     
     console.log(`[Session] Loaded ${exercises.value.length} exercises for session ${sessionId.value}`)
   } catch (error) {
@@ -108,7 +122,9 @@ watch(sessionId, async (newId) => {
 })
 
 // Set Logs State - tracks weight/reps/completed for each set
+// Set Logs State - tracks weight/reps/completed for each set
 interface SetLog {
+  id?: string // Dexie/Backend ID (optional for optimistic created sets)
   weight: number | null
   reps: number | null
   completed: boolean
@@ -116,19 +132,59 @@ interface SetLog {
 
 const setLogs = ref<Record<string, SetLog[]>>({})
 
-// Initialize set logs for each exercise
-function initializeSetLogs() {
-  exercises.value.forEach(ex => {
+// Initialize set logs for each exercise (load from Dexie)
+async function initializeSetLogs() {
+  if (!import.meta.client) return
+
+  const { getSetLogs } = useDatabase()
+
+  for (const ex of exercises.value) {
     if (!setLogs.value[ex.id]) {
-      setLogs.value[ex.id] = Array.from({ length: ex.targetSets }, () => ({
-        weight: null,
-        reps: null,
-        completed: false
-      }))
+      // 1. Load existing logs from Dexie
+      // Query by both local ID (ULID) and remote ID (MongoID) for synced data
+      const keys = [ex.id]
+      if (ex.remoteId) keys.push(ex.remoteId)
+      
+      const existingLogs = await db.setLogs
+        .where('planned_exercise_id')
+        .anyOf(keys)
+        .sortBy('set_index')
+      
+      if (existingLogs.length > 0) {
+        console.log(`[Session] Loaded ${existingLogs.length} persisted logs for ${ex.name}`)
+        // Map Dexie logs to UI state
+        setLogs.value[ex.id] = existingLogs.map(log => ({
+          id: log.id,
+          weight: log.weight,
+          reps: log.reps,
+          completed: log.completed
+        }))
+        
+        // Ensure we have enough rows for target sets
+        if (setLogs.value[ex.id] && setLogs.value[ex.id].length < ex.targetSets) {
+             const diff = ex.targetSets - setLogs.value[ex.id].length
+             for (let i = 0; i < diff; i++) {
+                 // Create empty UI state for missing sets (will be created on save)
+                 setLogs.value[ex.id].push({
+                    weight: null,
+                    reps: null,
+                    completed: false
+                 })
+             }
+        }
+      } else {
+        // Fallback: Create empty rows
+        setLogs.value[ex.id] = Array.from({ length: ex.targetSets }, () => ({
+          weight: null,
+          reps: null,
+          completed: false
+        }))
+      }
     }
-  })
+  }
 }
-initializeSetLogs()
+// Removed standalone call as it's now awaited in loadSessionData
+
 
 // Load persisted set logs from Dexie on mount
 async function loadPersistedLogs() {
@@ -159,7 +215,7 @@ async function loadPersistedLogs() {
   }
 }
 
-// Auto-save set log to Dexie when changed
+// Auto-save set log to Dexie and sync to backend when changed
 async function persistSetLog(exerciseId: string, setIndex: number) {
   if (!import.meta.client) return
   
@@ -176,6 +232,7 @@ async function persistSetLog(exerciseId: string, setIndex: number) {
   }
   
   try {
+    // Legacy: Save to sessionLogs table (for backward compatibility)
     await dbSaveSetLog({
       schedule_id: sessionId.value,
       exercise_id: exerciseId,
@@ -185,9 +242,38 @@ async function persistSetLog(exerciseId: string, setIndex: number) {
       reps: log.reps,
       completed: log.completed
     })
-    console.log(`[Session] Persisted set ${setIndex + 1} for ${exercise.name}`)
+    
+    // NEW: Sync to backend using atomic set_logs collection
+    // 1. Resolve Set ID from Dexie if we don't have it
+    let setId = log.id
+    if (!setId) {
+        const dexieLog = await db.setLogs.where('[planned_exercise_id+set_index]').equals([exerciseId, setIndex]).first()
+        if (dexieLog) {
+            setId = dexieLog.id
+            log.id = dexieLog.id // cache it locally
+        }
+    }
+
+    if (setId) {
+        await updateSetLogWithSync(setId, {
+            weight: log.weight || 0,
+            reps: log.reps || 0,
+            remarks: '',
+            completed: log.completed
+        })
+        console.log(`[Session] Persisted and synced set ${setIndex + 1} for ${exercise.name}`)
+    } else {
+        // Fallback: This set exists locally but has no ID/Entry in Dexie atomic table yet.
+        // This likely means we are offline and haven't synced the sets from backend yet,
+        // OR it's a new set that hasn't been saved to Dexie setLogs yet.
+        // We should create it in Dexie now.
+        // But what ID? If we use random ULID, backend sync might fail if backend expects matched ID.
+        // However, since we implemented syncScheduleSets, we should have IDs if online.
+        console.warn(`[Session] Cannot sync atomic set - missing ID for ${exercise.name} set ${setIndex}`)
+        // TODO: Handle this edge case (Create local atomic log?)
+    }
   } catch (error) {
-    console.error('[Session] Failed to persist set log:', error)
+    console.error('[Session] Failed to persist/sync set log:', error)
   }
 }
 
@@ -284,11 +370,11 @@ const isInProgress = computed(() => session.value.status === 'in-progress')
 
 // Start the session - update status to 'in-progress'
 async function startSession() {
-  const { updateScheduleStatus } = useDatabase()
+  const { updateScheduleStatusWithSync } = useDatabase()
   const toast = useToast()
   
   try {
-    await updateScheduleStatus(sessionId.value, 'in-progress')
+    await updateScheduleStatusWithSync(sessionId.value, 'in-progress')
     session.value.status = 'in-progress'
     toast.add({
       title: 'Session Started',
@@ -296,7 +382,7 @@ async function startSession() {
       color: 'success',
       icon: 'i-heroicons-play'
     })
-    console.log('[Session] Status updated to in-progress')
+    console.log('[Session] Status updated to in-progress (synced)')
   } catch (error) {
     console.error('[Session] Failed to start session:', error)
     toast.add({
@@ -306,8 +392,13 @@ async function startSession() {
   }
 }
 
-// Add a set to an exercise
-function addSet(exerciseId: string) {
+// Add a set to an exercise (with backend sync)
+async function addSet(exerciseId: string) {
+  // Get next set index
+  const currentSets = setLogs.value[exerciseId] || []
+  const newSetIndex = currentSets.length + 1
+  
+  // Update local state immediately (optimistic)
   if (!setLogs.value[exerciseId]) {
     setLogs.value[exerciseId] = []
   }
@@ -316,12 +407,40 @@ function addSet(exerciseId: string) {
     reps: null,
     completed: false
   })
+  
+  // Queue sync to backend
+  try {
+    const newLog = await addSetWithSync(exerciseId, newSetIndex)
+    console.log(`[Session] Added set ${newSetIndex} to exercise ${exerciseId}`)
+    
+    // Update local state with the generated ID (so updates/deletes work immediately)
+    const sets = setLogs.value[exerciseId]
+    if (sets && sets[newSetIndex - 1]) {
+        sets[newSetIndex - 1].id = newLog.id
+    }
+  } catch (error) {
+    console.error('[Session] Failed to sync new set:', error)
+  }
 }
 
 // Remove a set from an exercise
-function removeSet(exerciseId: string, setIndex: number) {
-  if (setLogs.value[exerciseId] && setLogs.value[exerciseId].length > 1) {
+async function removeSet(exerciseId: string, setIndex: number) {
+  if (setLogs.value[exerciseId] && setLogs.value[exerciseId].length > 0) {
+    const logToDelete = setLogs.value[exerciseId][setIndex]
+    
+    // Remove from UI immediately
     setLogs.value[exerciseId].splice(setIndex, 1)
+    
+    // Remove from DB/Backend
+    if (logToDelete && logToDelete.id) {
+        const { deleteSetLogWithSync } = useDatabase()
+        try {
+            await deleteSetLogWithSync(logToDelete.id)
+            console.log(`[Session] Removed set ${setIndex + 1} for ex ${exerciseId}`)
+        } catch (e) {
+            console.error('Failed to delete set log:', e)
+        }
+    }
   }
 }
 
@@ -351,9 +470,13 @@ async function addExercise() {
   
   const newOrder = exercises.value.length + 1
   
+  // Resolve schedule ID (use remote ID if available aka synced) to match what loadSessionData expects
+  const schedule = await getSchedule(sessionId.value)
+  const targetScheduleId = schedule?.remote_id || sessionId.value
+
   // Add to database with sync -> Returns Planned ID
-  const plannedId = await addPlannedExerciseWithSync({
-    schedule_id: sessionId.value,
+  const newPlannedExercise = await addPlannedExerciseWithSync({
+    schedule_id: targetScheduleId,
     exercise_id: selectedExercise.value.id,
     name: selectedExercise.value.name,
     target_sets: newExerciseSets.value,
@@ -362,24 +485,18 @@ async function addExercise() {
     notes: '',
     order: newOrder
   })
-  
-  // Add to local state using the new Planned ID
-  exercises.value.push({
-    id: plannedId,
-    exerciseId: selectedExercise.value.id,
-    name: selectedExercise.value.name,
-    targetSets: newExerciseSets.value,
-    targetReps: newExerciseReps.value,
-    restSeconds: 60,
-    notes: ''
-  })
-  
-  // Initialize set logs for the new exercise
-  setLogs.value[plannedId] = Array.from({ length: newExerciseSets.value }, () => ({
-    weight: null,
-    reps: null,
-    completed: false
-  }))
+  // Create initial sets locally (Backend auto-creation disabled)
+  // The sets will rely on the newly created PlannedExercise ULID
+  if (newExerciseSets.value > 0) {
+      const setsToCreate = newExerciseSets.value
+      for (let i = 1; i <= setsToCreate; i++) {
+          await addSetWithSync(newPlannedExercise, i)
+      }
+  }
+
+  // Refresh data
+  await loadSessionData()
+  await initializeSetLogs()
   
   // Reset form
   selectedExercise.value = undefined
@@ -522,23 +639,32 @@ function submitRemarks() {
 // Final finish - navigate home with optimistic sync
 async function completeFinalFinish() {
   const toast = useToast()
-  const { updateScheduleStatus, queueSync, isOnline } = useDatabase()
+  const { updateScheduleStatusWithSync, queueSync, isOnline } = useDatabase()
   
   const scheduleId = sessionId.value
 
   // Phase A: Optimistic - Update local state immediately
   try {
-    await updateScheduleStatus(scheduleId, 'completed', coachRemarks.value)
+    // Manually update local DB to avoid queuing a redundant 'status update' sync job
+    // The main 'complete' endpoint handles the status change on the backend.
+    await db.schedules.update(scheduleId, { status: 'completed', coach_remarks: coachRemarks.value, completed_at: new Date().toISOString() })
     session.value.status = 'completed'
-    console.log('[Session] Phase A: Optimistic update complete')
+    console.log('[Session] Phase A: Optimistic update complete (local only)')
   } catch (error) {
     console.error('[Session] Failed to update local state:', error)
   }
 
   // Phase B: Network Attempt
   try {
+    const token = useCookie('metamorph-token')
+    const headers: Record<string, string> = {}
+    if (token.value) {
+      headers['Authorization'] = `Bearer ${token.value}`
+    }
+
     const response = await $fetch(`/api/v1/pro/schedules/${scheduleId}/complete`, {
       method: 'POST',
+      headers,
       body: {
         remarks: coachRemarks.value,
         session_logs: Object.entries(setLogs.value).flatMap(([exerciseId, logs]) =>

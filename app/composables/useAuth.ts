@@ -86,6 +86,33 @@ export const useAuth = () => {
             const scheduleResult = await syncSchedules(today, weekFromNow)
             console.log(`[Auth] Synced ${scheduleResult.synced} schedules`)
 
+            // Deep sync: Fetch exercises and sets for these schedules (for offline use)
+            if (scheduleResult.synced > 0) {
+                const { db } = await import('~/utils/db')
+                const { syncPlannedExercises, syncScheduleSets } = useDatabase()
+
+                // Get schedules directly from DB to get IDs
+                const schedules = await db.schedules
+                    .where('start_time')
+                    .between(today.toISOString(), weekFromNow.toISOString())
+                    .toArray()
+
+                console.log(`[Auth] Deep syncing ${schedules.length} sessions...`)
+                for (const sched of schedules) {
+                    // Use remote_id (Mongo ID) for sync if available, else local ID
+                    // Actually sync functions expect Remote ID usually? No, they take ScheduleID and call backend.
+                    // Backend expects ScheduleID (MongoID).
+                    // Our local schedule has `remote_id` if synced.
+                    const syncId = sched.remote_id || sched.id
+                    try {
+                        await syncPlannedExercises(syncId)
+                        await syncScheduleSets(syncId)
+                    } catch (e) {
+                        console.warn(`[Auth] Deep sync failed for ${syncId}`, e)
+                    }
+                }
+            }
+
             console.log('[Auth] User data sync complete')
         } catch (error) {
             console.error('[Auth] Failed to sync user data:', error)

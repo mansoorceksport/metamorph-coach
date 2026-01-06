@@ -160,6 +160,14 @@ export function useApi() {
         }
     }
 
+    async function fetchSets(scheduleId: string) {
+        return await apiFetch<any[]>(`/v1/pro/schedules/${scheduleId}/sets`)
+    }
+
+    async function fetchExercises(scheduleId: string) {
+        return await apiFetch<any[]>(`/v1/pro/schedules/${scheduleId}/exercises`)
+    }
+
     /**
      * Convert API schedule response to local Schedule format
      * Uses client_id (ULID) as primary key if present, with MongoDB ID as remote_id
@@ -206,6 +214,8 @@ export function useApi() {
         apiFetch,
         fetchClients,
         fetchSchedules,
+        fetchSets,
+        fetchExercises,
         createSchedule,
         completeSchedule,
         // Sync helpers

@@ -120,6 +120,24 @@ export interface PlannedExercise {
     order: number
 }
 
+/**
+ * Set log entry (atomic, separate collection for sync)
+ */
+export interface SetLog {
+    id: string // ULID - immutable local primary key
+    remote_id: string | null // MongoDB ObjectID, null until synced
+    sync_status: 'pending' | 'synced' | 'deleted'
+    planned_exercise_id: string // Reference to PlannedExercise
+    schedule_id: string // Reference to Schedule (for quick queries)
+    member_id: string // For PB tracking
+    exercise_id: string // Reference to exercise definition (for PB)
+    set_index: number
+    weight: number
+    reps: number
+    remarks: string
+    completed: boolean
+}
+
 // ============================================
 // DEXIE DATABASE CLASS
 // ============================================
@@ -131,19 +149,21 @@ export class MetamorphDB extends Dexie {
     syncQueue!: EntityTable<SyncQueueItem, 'id'>
     cachedMembers!: EntityTable<CachedMember, 'id'>
     plannedExercises!: EntityTable<PlannedExercise, 'id'>
+    setLogs!: EntityTable<SetLog, 'id'>
 
     constructor() {
         super('MetamorphCoachDB')
 
-        // Version 6: Dual-Identity Sync (remote_id, sync_status)
-        this.version(6).stores({
+        // Version 7: Atomic SetLogs (separate table for set sync)
+        this.version(7).stores({
             // Primary key and indexed fields
             schedules: 'id, remote_id, member_id, start_time, status, sync_status, [start_time+status]',
             exercises: 'id, name, muscle_group',
             sessionLogs: 'id, remote_id, schedule_id, exercise_id, sync_status, [schedule_id+exercise_id]',
             syncQueue: 'id, correlation_id, payload_hash, timestamp, priority, nextRetryAt',
             cachedMembers: 'id, name, churn_score, attendance_trend',
-            plannedExercises: 'id, remote_id, schedule_id, exercise_id, sync_status, [schedule_id+order]'
+            plannedExercises: 'id, remote_id, schedule_id, exercise_id, sync_status, [schedule_id+order]',
+            setLogs: 'id, remote_id, planned_exercise_id, schedule_id, member_id, exercise_id, sync_status, [planned_exercise_id+set_index]'
         })
     }
 }
@@ -175,6 +195,7 @@ export async function clearAllData(): Promise<void> {
         db.sessionLogs.clear(),
         db.cachedMembers.clear(),
         db.plannedExercises.clear(),
+        db.setLogs.clear(),
         db.syncQueue.clear()
         // Note: Keep exercises as they're global catalog data
     ])

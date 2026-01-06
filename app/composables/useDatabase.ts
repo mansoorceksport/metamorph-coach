@@ -2,7 +2,7 @@
  * Database Repository Composable
  * Provides reactive queries and mutations for offline-first data access
  */
-import { db, type Schedule, type SessionLog, type SyncQueueItem, type Exercise, type PlannedExercise, type CachedMember, getTodayRange, checkIfNewPB, calculateVelocityDelta } from '~/utils/db'
+import { db, type Schedule, type SessionLog, type SyncQueueItem, type Exercise, type PlannedExercise, type CachedMember, type SetLog, getTodayRange, checkIfNewPB, calculateVelocityDelta } from '~/utils/db'
 import { generateId, generateHash, calculateBackoffMs } from '~/utils/crypto'
 import { liveQuery } from 'dexie'
 
@@ -221,6 +221,10 @@ export function useDatabase() {
 
         const entity = await db.plannedExercises.get(id)
         if (!entity) return // Already deleted
+
+        // 0. Cleanup local set logs (Atomic Set Logs)
+        // Ensure strictly associated logs are removed locally to reflect UI state immediately
+        await db.setLogs.where('planned_exercise_id').equals(id).delete()
 
         // Scenario A: Not synced yet (remote_id is null or undefined)
         // Also check if id looks like a MongoDB ObjectID (legacy synced records before migration)
@@ -442,6 +446,201 @@ export function useDatabase() {
         }
     }
 
+    // ============================================
+    // ATOMIC SET SYNC (new set_logs collection)
+    // ============================================
+
+    /**
+     * Update a set log with sync to backend
+     * Uses PUT /v1/pro/sets/:id
+     */
+    async function updateSetLogWithSync(
+        setId: string,
+        updates: { weight?: number; reps?: number; remarks?: string; completed?: boolean }
+    ): Promise<void> {
+        if (!import.meta.client) return
+
+        const setLog = await db.setLogs.get(setId)
+        if (!setLog) {
+            console.error(`[Sync] SetLog not found: ${setId}`)
+            return
+        }
+
+        // 1. Update locally (optimistic)
+        const updatedLog = {
+            ...setLog,
+            weight: updates.weight ?? setLog.weight,
+            reps: updates.reps ?? setLog.reps,
+            remarks: updates.remarks ?? setLog.remarks,
+            completed: updates.completed ?? setLog.completed
+        }
+        await db.setLogs.put(updatedLog)
+
+        // 2. Queue sync to backend
+        const backendId = setLog.remote_id || setId
+        const config = useRuntimeConfig()
+        const baseUrl = config.public.apiBase || ''
+
+        await queueSync({
+            method: 'PUT',
+            url: `${baseUrl}/v1/pro/sets/${backendId}`,
+            body: JSON.stringify({
+                weight: updatedLog.weight,
+                reps: updatedLog.reps,
+                remarks: updatedLog.remarks,
+                completed: updatedLog.completed
+            }),
+            priority: 'normal',
+            context: {
+                type: 'set_update',
+                set_id: setId,
+                planned_exercise_id: setLog.planned_exercise_id
+            }
+        })
+        console.log(`[Sync] Queued set update: ${setId}`)
+        console.log(`[Sync] Queued set update: ${setId}`)
+    }
+
+    /**
+ * Delete a set log with sync to backend
+ * Uses DELETE /v1/pro/sets/:id
+ */
+    async function deleteSetLogWithSync(setId: string): Promise<void> {
+        if (!import.meta.client) return
+
+        // Smart Deletion: Check if this set is pending creation
+        // If it is, we can just remove the pending create request and delete locally
+        // This allows offline create -> delete without sending any network traffic
+        const pendingCreate = await db.syncQueue
+            .filter(item => item.context?.type === 'set_add' && item.context?.temp_id === setId)
+            .first()
+
+        if (pendingCreate) {
+            await removeSyncItem(pendingCreate.id)
+            console.log(`[Sync] Smart Deletion: Cancelled pending set creation for ${setId}`)
+            // Delete locally
+            await db.setLogs.delete(setId)
+            return
+        }
+
+        const setLog = await db.setLogs.get(setId)
+        if (!setLog) {
+            // Maybe already deleted, but check if we need to clean up anyway
+            // If we don't have the log, we can't know the remote_id easily unless we trust setId is remote_id
+            // But let's assume if it's not in DB, it's gone
+            return
+        }
+
+        // 1. Delete locally
+        await db.setLogs.delete(setId)
+
+        // 2. Queue sync to backend
+        // CRITICAL: Use remote_id if available, otherwise fallback to setId (legacy or already synced but not updated locally?)
+        // If it was synced, it SHOULD have remote_id. If not, and not pending, maybe it's a legacy ID.
+        const backendId = setLog.remote_id || setId
+        const config = useRuntimeConfig()
+        const baseUrl = config.public.apiBase || ''
+
+        await queueSync({
+            method: 'DELETE',
+            url: `${baseUrl}/v1/pro/sets/${backendId}`,
+            priority: 'normal',
+            context: {
+                type: 'set_delete',
+                set_id: setId,
+                remote_id: backendId
+            }
+        })
+        console.log(`[Sync] Queued set delete: ${setId} (remote: ${backendId})`)
+    }
+    /**
+     * Add a new set to an exercise with sync
+     * Uses POST /v1/pro/exercises/:id/sets
+     */
+    async function addSetWithSync(
+        plannedExerciseId: string,
+        setIndex: number
+    ): Promise<SetLog> {
+        if (!import.meta.client) throw new Error('Client-side only')
+
+        const plannedExercise = await db.plannedExercises.get(plannedExerciseId)
+        if (!plannedExercise) {
+            throw new Error(`PlannedExercise not found: ${plannedExerciseId}`)
+        }
+
+        // Get schedule for member_id
+        const schedule = await db.schedules.get(plannedExercise.schedule_id)
+
+        // Create local set log
+        const newSetLog: SetLog = {
+            id: generateId(),
+            remote_id: null,
+            sync_status: 'pending',
+            planned_exercise_id: plannedExerciseId,
+            schedule_id: plannedExercise.schedule_id,
+            member_id: schedule?.member_id || '',
+            exercise_id: plannedExercise.exercise_id,
+            set_index: setIndex,
+            weight: 0,
+            reps: 0,
+            remarks: '',
+            completed: false
+        }
+        await db.setLogs.add(newSetLog)
+
+        // Queue sync to backend
+        const backendExId = plannedExercise.remote_id || plannedExerciseId
+        const config = useRuntimeConfig()
+        const baseUrl = config.public.apiBase || ''
+
+        await queueSync({
+            method: 'POST',
+            url: `${baseUrl}/v1/pro/exercises/${backendExId}/sets`,
+            body: JSON.stringify({
+                client_id: newSetLog.id,
+                set_index: setIndex
+            }),
+            priority: 'normal',
+            context: {
+                type: 'set_add',
+                temp_id: newSetLog.id,
+                planned_exercise_id: plannedExerciseId
+            }
+        })
+        console.log(`[Sync] Queued new set: ${newSetLog.id} for exercise ${plannedExerciseId}`)
+
+        return newSetLog
+    }
+
+    /**
+     * Get set logs for a planned exercise (reactive)
+     */
+    function getSetLogs(plannedExerciseId: string) {
+        const sets = ref<SetLog[]>([])
+        const loading = ref(true)
+
+        if (import.meta.client) {
+            const subscription = liveQuery(async () => {
+                return await db.setLogs
+                    .where('planned_exercise_id')
+                    .equals(plannedExerciseId)
+                    .sortBy('set_index')
+            }).subscribe({
+                next: (result) => {
+                    sets.value = result
+                    loading.value = false
+                },
+                error: () => {
+                    loading.value = false
+                }
+            })
+
+            onUnmounted(() => subscription.unsubscribe())
+        }
+
+        return { sets, loading }
+    }
+
     /**
      * Save or update a schedule (with deduplication for dual-identity)
      */
@@ -477,15 +676,20 @@ export function useDatabase() {
     }
 
     /**
-     * Update schedule status (optimistic)
+     * Update schedule status with sync
      */
-    async function updateScheduleStatus(
+    async function updateScheduleStatusWithSync(
         scheduleId: string,
         status: Schedule['status'],
         remarks?: string
     ): Promise<void> {
         if (!import.meta.client) return
 
+        // Get schedule to resolve remote_id
+        const schedule = await db.schedules.get(scheduleId)
+        if (!schedule) return
+
+        // 1. Update locally (optimistic)
         const updates: Partial<Schedule> = { status }
         if (status === 'completed') {
             updates.completed_at = new Date().toISOString()
@@ -495,6 +699,40 @@ export function useDatabase() {
         }
 
         await db.schedules.update(scheduleId, updates)
+
+        // 2. Queue sync to backend
+        const isMongoObjectId = /^[a-f0-9]{24}$/.test(scheduleId)
+        const backendId = schedule.remote_id || (isMongoObjectId ? scheduleId : null)
+
+        if (backendId) {
+            const config = useRuntimeConfig()
+            const baseUrl = config.public.apiBase || ''
+
+            await queueSync({
+                method: 'PUT',
+                url: `${baseUrl}/v1/pro/schedules/${backendId}/status`,
+                body: JSON.stringify({ status }),
+                priority: 'high',
+                context: {
+                    type: 'schedule_status_update',
+                    schedule_id: scheduleId,
+                    status
+                }
+            })
+            console.log(`[Sync] Queued status update: ${scheduleId} → ${status}`)
+        } else {
+            // Schedule not synced yet - update the pending create body
+            const pendingCreate = await db.syncQueue
+                .filter(item => item.context?.type === 'schedule_create' && item.context?.schedule_id === scheduleId)
+                .first()
+
+            if (pendingCreate && pendingCreate.body) {
+                const existingBody = JSON.parse(pendingCreate.body)
+                const mergedBody = { ...existingBody, status }
+                await db.syncQueue.update(pendingCreate.id, { body: JSON.stringify(mergedBody) })
+                console.log(`[Sync] Merged status update into pending POST for schedule ${scheduleId}`)
+            }
+        }
     }
 
     /**
@@ -592,6 +830,97 @@ export function useDatabase() {
     }
 
     /**
+     * Sync Sets for a schedule (Fetch & Upsert)
+     */
+    async function syncScheduleSets(scheduleId: string): Promise<number> {
+        if (!import.meta.client) return 0
+
+        try {
+            const api = useApi()
+            const sets = await api.fetchSets(scheduleId) as any[]
+
+            if (!sets || sets.length === 0) return 0
+
+            // Pre-fetch all planned exercises for this schedule to resolve IDs
+            // We need to map Backend ID (Mongo) -> Frontend ID (ULID)
+            const exercises = await db.plannedExercises
+                .where('remote_id')
+                .anyOf(sets.map(s => s.planned_exercise_id))
+                .toArray()
+
+            const mongoToUlidMap = new Map<string, string>()
+            exercises.forEach(ex => {
+                if (ex.remote_id) mongoToUlidMap.set(ex.remote_id, ex.id)
+            })
+
+            // Convert to SetLog format
+            const setLogs: SetLog[] = sets.map(s => {
+                // If we can resolve the planned exercise to a local ULID, use it.
+                // Otherwise fall back to the backend ID (which might happen if exercise sync failed or race condition)
+                const localExerciseId = mongoToUlidMap.get(s.planned_exercise_id) || s.planned_exercise_id
+
+                return {
+                    id: s.client_id || s.id, // Prefer client_id if available
+                    remote_id: s.id,
+                    sync_status: 'synced',
+                    planned_exercise_id: localExerciseId,
+                    schedule_id: s.schedule_id,
+                    member_id: s.member_id,
+                    exercise_id: s.exercise_id,
+                    set_index: s.set_index,
+                    weight: s.weight,
+                    reps: s.reps,
+                    remarks: s.remarks,
+                    completed: s.completed
+                }
+            })
+
+            await db.setLogs.bulkPut(setLogs)
+            console.log(`[Database] Synced ${setLogs.length} sets for schedule ${scheduleId}`)
+            return setLogs.length
+        } catch (error: any) {
+            console.error(`[Database] Failed to sync sets for ${scheduleId}:`, error)
+            return 0
+        }
+    }
+
+    /**
+     * Sync Planned Exercises for a schedule
+     */
+    async function syncPlannedExercises(scheduleId: string): Promise<number> {
+        if (!import.meta.client) return 0
+
+        try {
+            const api = useApi()
+            const exercises = await api.fetchExercises(scheduleId) as any[]
+
+            if (!exercises || exercises.length === 0) return 0
+
+            // Convert to PlannedExercise format
+            const plannedExercises: PlannedExercise[] = exercises.map(e => ({
+                id: e.client_id || e.id, // Prefer client_id
+                remote_id: e.id,
+                sync_status: 'synced',
+                schedule_id: e.schedule_id,
+                exercise_id: e.exercise_id,
+                name: e.name,
+                target_sets: e.target_sets,
+                target_reps: e.target_reps,
+                rest_seconds: e.rest_seconds,
+                notes: e.notes,
+                order: e.order
+            }))
+
+            await db.plannedExercises.bulkPut(plannedExercises)
+            console.log(`[Database] Synced ${plannedExercises.length} exercises for schedule ${scheduleId}`)
+            return plannedExercises.length
+        } catch (error: any) {
+            console.error(`[Database] Failed to sync exercises for ${scheduleId}:`, error)
+            return 0
+        }
+    }
+
+    /**
      * Create schedule with local-first + sync queue
      */
     async function createScheduleWithSync(input: CreateScheduleInput): Promise<string> {
@@ -632,11 +961,21 @@ export function useDatabase() {
     async function deleteSchedule(scheduleId: string): Promise<void> {
         if (!import.meta.client) throw new Error('Client-side only')
 
+        const schedule = await db.schedules.get(scheduleId)
+        const remoteId = schedule?.remote_id
+
         await db.schedules.delete(scheduleId)
-        // Also delete any planned exercises and session logs for this schedule
-        await db.plannedExercises.where('schedule_id').equals(scheduleId).delete()
-        await db.sessionLogs.where('schedule_id').equals(scheduleId).delete()
-        console.log(`[Database] Deleted schedule ${scheduleId}`)
+
+        // Also delete any planned exercises and set logs for this schedule
+        // Query by local ID or remote ID to ensure cleanup
+        const keys = [scheduleId]
+        if (remoteId) keys.push(remoteId)
+
+        await db.plannedExercises.where('schedule_id').anyOf(keys).delete()
+        await db.sessionLogs.where('schedule_id').anyOf(keys).delete() // Legacy
+        await db.setLogs.where('schedule_id').anyOf(keys).delete() // Atomic Sets
+
+        console.log(`[Database] Deleted schedule ${scheduleId} (and cascaded sets)`)
     }
 
     /**
@@ -647,9 +986,23 @@ export function useDatabase() {
 
         const entity = await db.schedules.get(scheduleId)
 
+        // Deep Smart Deletion Prep: Get connected IDs before deleting data
+        const relatedExercises = await db.plannedExercises.where('schedule_id').equals(scheduleId).toArray()
+        const exerciseIds = relatedExercises.map(e => e.id)
+        if (entity?.remote_id) {
+            // Find exercises that might be using the remote ID (unlikely if locally created, but cover bases)
+            // Actually, local exercises usually use ULID as primary key.
+            // But if we have remote_id, good to know.
+        }
+
         // Delete local associated data first
-        await db.plannedExercises.where('schedule_id').equals(scheduleId).delete()
-        await db.sessionLogs.where('schedule_id').equals(scheduleId).delete()
+        // Query by local ID or remote ID to ensure cleanup
+        const keys = [scheduleId]
+        if (entity?.remote_id) keys.push(entity.remote_id)
+
+        await db.plannedExercises.where('schedule_id').anyOf(keys).delete()
+        await db.sessionLogs.where('schedule_id').anyOf(keys).delete()
+        await db.setLogs.where('schedule_id').anyOf(keys).delete()
 
         if (!entity) {
             // Already deleted? Just clean up
@@ -662,7 +1015,7 @@ export function useDatabase() {
         const isMongoObjectId = /^[a-f0-9]{24}$/.test(scheduleId)
 
         if (!entity.remote_id && !isMongoObjectId) {
-            // Cancel pending POST in syncQueue
+            // Cancel pending POST in syncQueue (Schedule Create)
             const pendingCreate = await db.syncQueue
                 .filter(item => item.context?.type === 'schedule_create' && item.context?.schedule_id === scheduleId)
                 .first()
@@ -670,6 +1023,33 @@ export function useDatabase() {
             if (pendingCreate) {
                 await removeSyncItem(pendingCreate.id)
                 console.log(`[Sync] Smart Deletion: Cancelled pending POST for schedule ${scheduleId}`)
+
+                // DEEP CLEAN: Also cancel pending creations for children (Exercises and Sets)
+                // 1. Cancel Exercise Adds
+                const pendingExercises = await db.syncQueue
+                    .filter(item => item.context?.type === 'exercise_add' && item.context?.schedule_id === scheduleId)
+                    .toArray()
+
+                for (const pEx of pendingExercises) {
+                    await removeSyncItem(pEx.id)
+                    console.log(`[Sync] Smart Deletion: Cancelled pending exercise add ${pEx.context?.temp_id}`)
+                }
+
+                // 2. Cancel Set Adds (linked by planned_exercise_id)
+                // We use the exerciseIds we gathered before deletion
+                if (exerciseIds.length > 0) {
+                    const pendingSets = await db.syncQueue
+                        .filter(item =>
+                            item.context?.type === 'set_add' &&
+                            exerciseIds.includes(item.context?.planned_exercise_id)
+                        )
+                        .toArray()
+
+                    for (const pSet of pendingSets) {
+                        await removeSyncItem(pSet.id)
+                        console.log(`[Sync] Smart Deletion: Cancelled pending set add ${pSet.context?.temp_id}`)
+                    }
+                }
             }
 
             // Delete locally
@@ -899,9 +1279,40 @@ export function useDatabase() {
                                         sync_status: 'synced'
                                     })
                                     console.log(`[Sync] Linked exercise: ${localId} → ${backendEx.id}`)
+
+                                    // Rewrite pending URL for Sets dependent on this exercise
+                                    // They would have URL: /v1/pro/exercises/<ULID>/sets
+                                    // Need URL: /v1/pro/exercises/<MongoID>/sets
+                                    const pendingSets = await db.syncQueue
+                                        .filter(q => q.context?.type === 'set_add' && q.context?.planned_exercise_id === localId)
+                                        .toArray()
+
+                                    for (const pendingSet of pendingSets) {
+                                        const newUrl = pendingSet.url.replace(localId, backendEx.id)
+                                        await db.syncQueue.update(pendingSet.id, { url: newUrl })
+                                        console.log(`[Sync] Fixed pending set URL for set ${pendingSet.context?.set_index}`)
+                                    }
                                 }
                             } catch (e) {
                                 console.error('[SyncQueue] Failed to update local exercise IDs:', e)
+                            }
+                        }
+
+                        // Handle set creation - populate remote_id
+                        if (item.method === 'POST' && item.context?.type === 'set_add') {
+                            try {
+                                const backendSet = await response.json()
+                                const localSetId = item.context.temp_id
+                                if (backendSet.id && localSetId) {
+                                    await db.setLogs.update(localSetId, {
+                                        remote_id: backendSet.id,
+                                        sync_status: 'synced',
+                                        planned_exercise_id: backendSet.planned_exercise_id // Ensure MongoID linkage on sync
+                                    })
+                                    console.log(`[Sync] Linked set: ${localSetId} → ${backendSet.id}`)
+                                }
+                            } catch (e) {
+                                console.error('[SyncQueue] Failed to update local set remote_id:', e)
                             }
                         }
 
@@ -1052,7 +1463,6 @@ export function useDatabase() {
         removePlannedExerciseByKeys,
         updatePlannedExercise: updatePlannedExerciseWithSync, // Alias for backward compatibility if needed, or just rename
         updatePlannedExerciseWithSync,
-        updatePlannedExerciseByKeys,
         seedPlannedExercises,
 
         // Mutations
@@ -1064,12 +1474,20 @@ export function useDatabase() {
         deleteSchedule,
         deleteScheduleWithSync,
         getCachedMembers,
-        updateScheduleStatus,
+        updateScheduleStatusWithSync,
         saveExercise,
+
+        // Atomic Set Sync (new set_logs collection)
+        updateSetLogWithSync,
+        addSetWithSync,
+        deleteSetLogWithSync,
+        getSetLogs,
 
         // Sync operations (requires auth)
         syncClients,
         syncSchedules,
+        syncScheduleSets,
+        syncPlannedExercises,
 
         // Sync queue (idempotent with correlation context)
         queueSync,
