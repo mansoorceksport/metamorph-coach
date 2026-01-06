@@ -139,9 +139,33 @@ export function useDatabase() {
         return { exercises, loading }
     }
 
-    /**
-     * Get planned exercises for a schedule (async, non-reactive)
-     */
+    async function syncMasterExercises(): Promise<number> {
+        if (!import.meta.client) return 0
+        try {
+            const api = useApi()
+            const exercises = await api.fetchMasterExercises() as any[]
+
+            if (!exercises || exercises.length === 0) return 0
+
+            // Map backend fields to local schema
+            const localExercises: Exercise[] = exercises.map(e => ({
+                id: e.id,
+                name: e.name,
+                muscle_group: e.muscle_group,
+                equipment: e.equipment,
+                video_url: e.video_url,
+                personal_best_weight: 0,
+                last_3_weights_history: []
+            }))
+
+            await db.exercises.bulkPut(localExercises)
+            console.log(`[Database] Synced ${localExercises.length} master exercises`)
+            return localExercises.length
+        } catch (error) {
+            console.error('[Database] Failed to sync master exercises:', error)
+            return 0
+        }
+    }
     async function fetchPlannedExercises(scheduleId: string): Promise<PlannedExercise[]> {
         if (!import.meta.client) return []
         return await db.plannedExercises
@@ -1140,7 +1164,8 @@ export function useDatabase() {
         console.log(`[SyncQueue] Queued: ${action.method} ${action.url} (correlation: ${item.correlation_id.slice(0, 8)}...)`)
 
         // Trigger immediate sync if online (with small delay to batch multiple operations)
-        if (isOnline.value) {
+        // Use navigator.onLine as fallback for mobile browsers
+        if (isOnline.value || navigator.onLine) {
             setTimeout(() => {
                 processSyncQueue().catch(err =>
                     console.error('[SyncQueue] Auto-sync failed:', err)
@@ -1202,7 +1227,21 @@ export function useDatabase() {
      * Process the sync queue with exponential backoff
      */
     async function processSyncQueue(): Promise<{ success: number; failed: number }> {
-        if (!import.meta.client || isSyncing.value || !isOnline.value) {
+        if (!import.meta.client) {
+            return { success: 0, failed: 0 }
+        }
+
+        // Check if already syncing
+        if (isSyncing.value) {
+            console.log('[SyncQueue] Already syncing, skipping...')
+            return { success: 0, failed: 0 }
+        }
+
+        // Use navigator.onLine as fallback if isOnline ref is false
+        // Mobile browsers can have unreliable navigator.onLine, but if GET requests work, we're online
+        const effectivelyOnline = isOnline.value || navigator.onLine
+        if (!effectivelyOnline) {
+            console.log('[SyncQueue] Offline (isOnline:', isOnline.value, ', navigator.onLine:', navigator.onLine, '), skipping sync')
             return { success: 0, failed: 0 }
         }
 
@@ -1212,7 +1251,7 @@ export function useDatabase() {
 
         try {
             const items = await getPendingSyncItems()
-            console.log(`[SyncQueue] Processing ${items.length} pending items`)
+            console.log(`[SyncQueue] Processing ${items.length} pending items (online: ${effectivelyOnline})`)
 
             // Get auth token from cookie
             const metamorphToken = useCookie<string | null>('metamorph-token')
@@ -1488,6 +1527,7 @@ export function useDatabase() {
         syncSchedules,
         syncScheduleSets,
         syncPlannedExercises,
+        syncMasterExercises,
 
         // Sync queue (idempotent with correlation context)
         queueSync,

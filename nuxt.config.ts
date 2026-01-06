@@ -28,7 +28,7 @@ export default defineNuxtConfig({
 
   routeRules: {
     '/': { prerender: true },
-    '/api/v1/**': { proxy: 'http://localhost:8080/v1/**' }
+    '/api/v1/**': { proxy: `${process.env.NUXT_PUBLIC_API_BASE || 'http://localhost:8080'}/v1/**` }
   },
 
   compatibilityDate: '2025-01-15',

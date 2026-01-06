@@ -169,6 +169,13 @@ export function useApi() {
     }
 
     /**
+     * Fetch master exercise library
+     */
+    async function fetchMasterExercises() {
+        return await apiFetch<any[]>('/v1/exercises')
+    }
+
+    /**
      * Convert API schedule response to local Schedule format
      * Uses client_id (ULID) as primary key if present, with MongoDB ID as remote_id
      */
@@ -216,6 +223,7 @@ export function useApi() {
         fetchSchedules,
         fetchSets,
         fetchExercises,
+        fetchMasterExercises,
         createSchedule,
         completeSchedule,
         // Sync helpers

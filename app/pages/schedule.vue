@@ -81,20 +81,39 @@ onMounted(() => {
   }
 })
 
-// Member options for dropdown - show remaining sessions
+// Member options for dropdown - filter out depleted packages and show remaining sessions
 const memberOptions = computed(() => 
-  members.value.map(m => ({
-    label: m.name,
-    value: m,
-    avatar: m.avatar ? { src: m.avatar, alt: m.name } : undefined,
-    // Show remaining sessions badge
-    suffix: m.remaining_sessions !== undefined ? `${m.remaining_sessions} sessions left` : undefined
-  }))
+  members.value
+    .filter(m => (m.remaining_sessions ?? 0) > 0) // Only show members with sessions left
+    .map(m => ({
+      label: m.name,
+      value: m,
+      avatar: m.avatar ? { src: m.avatar, alt: m.name } : undefined,
+      // Show remaining sessions badge
+      suffix: m.remaining_sessions !== undefined ? `${m.remaining_sessions} sessions left` : undefined
+    }))
+)
+
+// Check if there are any members available for scheduling
+const hasAvailableMembers = computed(() => memberOptions.value.length > 0)
+const depletedMembersCount = computed(() => 
+  members.value.filter(m => (m.remaining_sessions ?? 0) === 0).length
 )
 
 // Create new schedule
 async function handleCreateSchedule() {
   if (!newSchedule.value.member) return
+  
+  // Double-check the member has remaining sessions
+  if ((newSchedule.value.member.remaining_sessions ?? 0) <= 0) {
+    toast.add({
+      title: 'Package Depleted',
+      description: `${newSchedule.value.member.name} has no remaining sessions. Please renew their package.`,
+      icon: 'i-heroicons-exclamation-triangle',
+      color: 'warning'
+    })
+    return
+  }
   
   isCreating.value = true
   try {
@@ -117,10 +136,35 @@ async function handleCreateSchedule() {
     }
     showNewScheduleModal.value = false
     
+    toast.add({
+      title: 'Session Scheduled',
+      description: 'The training session has been created successfully.',
+      icon: 'i-heroicons-check-circle',
+      color: 'success'
+    })
+    
     // Navigate to new session
     router.push(`/sessions/${scheduleId}`)
-  } catch (error) {
+  } catch (error: any) {
     console.error('[Schedule] Failed to create:', error)
+    
+    // Check if it's a package depleted error
+    const errorMessage = error?.message?.toLowerCase() || ''
+    if (errorMessage.includes('depleted') || errorMessage.includes('no remaining') || errorMessage.includes('package')) {
+      toast.add({
+        title: 'Package Depleted',
+        description: 'This member has no remaining sessions. Please renew their package first.',
+        icon: 'i-heroicons-exclamation-triangle',
+        color: 'warning'
+      })
+    } else {
+      toast.add({
+        title: 'Failed to Create Session',
+        description: error?.message || 'An unexpected error occurred. Please try again.',
+        icon: 'i-heroicons-x-circle',
+        color: 'error'
+      })
+    }
   } finally {
     isCreating.value = false
   }
@@ -437,6 +481,26 @@ function clearFilters() {
 
       <template #body>
         <div class="space-y-5 p-4">
+          <!-- Warning: Depleted Members -->
+          <UAlert
+            v-if="depletedMembersCount > 0"
+            color="warning"
+            variant="soft"
+            icon="i-heroicons-exclamation-triangle"
+            :title="`${depletedMembersCount} member${depletedMembersCount > 1 ? 's' : ''} with depleted packages`"
+            description="These members are hidden from the list. Renew their packages to schedule sessions."
+          />
+
+          <!-- No Available Members Warning -->
+          <UAlert
+            v-if="!hasAvailableMembers && members.length > 0"
+            color="error"
+            variant="soft"
+            icon="i-heroicons-x-circle"
+            title="No members available for scheduling"
+            description="All member packages are depleted. Please renew packages to schedule new sessions."
+          />
+
           <!-- Member Selection -->
           <div>
             <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -446,14 +510,18 @@ function clearFilters() {
               v-model="newSchedule.member"
               :items="memberOptions"
               value-key="value"
-              placeholder="Choose a member..."
+              :placeholder="hasAvailableMembers ? 'Choose a member...' : 'No members with active packages'"
+              :disabled="!hasAvailableMembers"
               size="lg"
               class="w-full"
             >
               <template #item="{ item }">
-                <div v-if="item && typeof item === 'object' && 'label' in item" class="flex items-center gap-3">
-                  <UAvatar :alt="String(item.label)" size="sm" />
-                  <span>{{ item.label }}</span>
+                <div v-if="item && typeof item === 'object' && 'label' in item" class="flex items-center justify-between w-full">
+                  <div class="flex items-center gap-3">
+                    <UAvatar :alt="String(item.label)" size="sm" />
+                    <span>{{ item.label }}</span>
+                  </div>
+                  <span v-if="item.suffix" class="text-xs text-gray-500">{{ item.suffix }}</span>
                 </div>
               </template>
             </USelectMenu>
@@ -513,7 +581,7 @@ function clearFilters() {
             color="primary"
             icon="i-heroicons-plus"
             :loading="isCreating"
-            :disabled="!newSchedule.member"
+            :disabled="!newSchedule.member || !hasAvailableMembers"
             @click="handleCreateSchedule"
           />
         </div>

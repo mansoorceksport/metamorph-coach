@@ -49,8 +49,10 @@ export default defineNuxtPlugin(async (nuxtApp) => {
     window.addEventListener('online', handleOnline)
     window.addEventListener('offline', handleOffline)
 
-    // Set initial online state
+    // Set initial online state - on mobile browsers navigator.onLine can be unreliable
+    // Default to true and let actual network requests determine connectivity
     isOnline.value = navigator.onLine
+    console.log(`[SyncEngine] Initial online state: ${navigator.onLine} (navigator.onLine)`)
 
     // ============================================
     // QUEUE FLUSH LOGIC (Uses idempotent processor)
@@ -58,7 +60,21 @@ export default defineNuxtPlugin(async (nuxtApp) => {
 
     async function flushQueue(): Promise<void> {
         // Prevent concurrent processing
-        if (isProcessing || !navigator.onLine) return
+        if (isProcessing) return
+
+        // Use navigator.onLine as fallback - mobile browsers can have unreliable isOnline ref
+        const effectivelyOnline = isOnline.value || navigator.onLine
+        if (!effectivelyOnline) {
+            console.log('[SyncEngine] Offline, skipping flush')
+            return
+        }
+
+        // Force isOnline to true if navigator says we're online
+        // This helps recover from stale offline state
+        if (navigator.onLine && !isOnline.value) {
+            console.log('[SyncEngine] Correcting stale offline state')
+            isOnline.value = true
+        }
 
         isProcessing = true
 
@@ -90,7 +106,13 @@ export default defineNuxtPlugin(async (nuxtApp) => {
         if (heartbeatTimer) return
 
         heartbeatTimer = setInterval(async () => {
-            if (navigator.onLine && !isProcessing) {
+            // Correct stale offline state
+            if (navigator.onLine && !isOnline.value) {
+                console.log('[SyncEngine] Heartbeat: Correcting stale offline state')
+                isOnline.value = true
+            }
+
+            if ((isOnline.value || navigator.onLine) && !isProcessing) {
                 const items = await getPendingSyncItems()
                 if (items.length > 0) {
                     console.log(`[SyncEngine] Heartbeat: ${items.length} items ready for sync...`)

@@ -13,7 +13,12 @@ let authListenerInitialized = false
 export const useAuth = () => {
     const { auth } = useFirebase()
     const user = useState<User | null>('firebase-user', () => null)
-    const metamorphToken = useCookie<string | null>('metamorph-token')
+    // Configure cookie with proper options for dev/mobile access
+    const metamorphToken = useCookie<string | null>('metamorph-token', {
+        sameSite: 'lax', // Allow cookie in same-site navigations
+        secure: false,   // Allow over HTTP in development
+        maxAge: 60 * 60 * 24 * 7, // 7 days
+    })
     const loading = useState<boolean>('firebase-loading', () => true)
     const error = useState<string | null>('firebase-error', () => null)
     const config = useRuntimeConfig()
@@ -74,7 +79,11 @@ export const useAuth = () => {
 
         try {
             console.log('[Auth] Syncing user data after login...')
-            const { syncClients, syncSchedules } = useDatabase()
+            const { syncClients, syncSchedules, syncMasterExercises } = useDatabase()
+
+            // Sync master exercise library (essential for session planning)
+            const exerciseResult = await syncMasterExercises()
+            console.log(`[Auth] Synced ${exerciseResult} master exercises`)
 
             // Sync clients (members) for this coach
             const clientResult = await syncClients()
