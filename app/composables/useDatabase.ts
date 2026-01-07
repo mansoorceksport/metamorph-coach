@@ -238,6 +238,109 @@ export function useDatabase() {
     }
 
     /**
+     * CASCADE CANCELLATION HELPERS
+     * Cancel all pending sync operations for an entity and its children
+     */
+
+    /**
+     * Cancel all pending operations related to an exercise (sets, updates, etc.)
+     * Uses hybrid matching: context metadata + URL parsing for robustness
+     */
+    async function cancelPendingOperationsForExercise(exerciseId: string): Promise<number> {
+        if (!import.meta.client) return 0
+
+        const orphanedOps = await db.syncQueue
+            .filter(item => {
+                // Match by context metadata (preferred)
+                if (item.context?.planned_exercise_id === exerciseId ||
+                    item.context?.temp_id === exerciseId) {
+                    return true
+                }
+
+                // Fallback: Match by URL pattern
+                if (item.url?.includes(`/exercises/${exerciseId}`) ||
+                    item.url?.includes(`/exercises/${exerciseId}/sets`)) {
+                    return true
+                }
+
+                return false
+            })
+            .toArray()
+
+        let cancelledCount = 0
+        for (const op of orphanedOps) {
+            await removeSyncItem(op.id)
+            console.log(`[Sync] Cascade cancel: ${op.method} ${op.url} (exercise ${exerciseId})`)
+            cancelledCount++
+        }
+
+        return cancelledCount
+    }
+
+    /**
+     * Cancel all pending operations related to a schedule (exercises, sets, updates)
+     * Includes deep cascade: schedule → exercises → sets
+     */
+    async function cancelPendingOperationsForSchedule(scheduleId: string): Promise<number> {
+        if (!import.meta.client) return 0
+
+        // Step 1: Find all exercises pending for this schedule
+        const pendingExercises = await db.syncQueue
+            .filter(item =>
+                item.context?.type === 'exercise_add' &&
+                (item.context?.schedule_id === scheduleId || item.context?.backend_schedule_id === scheduleId)
+            )
+            .toArray()
+
+        // Step 2: Cancel operations for each exercise (including their sets)
+        let cancelledCount = 0
+        for (const exOp of pendingExercises) {
+            const exId = exOp.context?.temp_id
+            if (exId) {
+                const exCancelled = await cancelPendingOperationsForExercise(exId)
+                cancelledCount += exCancelled
+            }
+        }
+
+        // Step 3: Cancel schedule-level operations (updates, the schedule itself)
+        // BUT: Preserve important operations like status updates and completion
+        const scheduleOps = await db.syncQueue
+            .filter(item => {
+                // CRITICAL: Never cancel status updates or completion requests
+                // These represent important state transitions that should always sync
+                if (item.context?.type === 'schedule_status_update' ||
+                    item.context?.type === 'session_complete') {
+                    return false // Preserve these
+                }
+
+                // Match by context
+                if (item.context?.schedule_id === scheduleId ||
+                    item.context?.backend_schedule_id === scheduleId ||
+                    item.context?.temp_id === scheduleId) {
+                    return true
+                }
+
+                // Fallback: Match by URL (but exclude status and complete endpoints)
+                if (item.url?.includes(`/schedules/${scheduleId}`) &&
+                    !item.url?.includes('/status') &&
+                    !item.url?.includes('/complete')) {
+                    return true
+                }
+
+                return false
+            })
+            .toArray()
+
+        for (const op of scheduleOps) {
+            await removeSyncItem(op.id)
+            console.log(`[Sync] Cascade cancel: ${op.method} ${op.url} (schedule ${scheduleId})`)
+            cancelledCount++
+        }
+
+        return cancelledCount
+    }
+
+    /**
      * Remove a planned exercise with sync (Dual-Identity aware)
      */
     async function removePlannedExerciseWithSync(id: string): Promise<void> {
@@ -246,7 +349,13 @@ export function useDatabase() {
         const entity = await db.plannedExercises.get(id)
         if (!entity) return // Already deleted
 
-        // 0. Cleanup local set logs (Atomic Set Logs)
+        // 0. CASCADE CANCEL all pending operations for this exercise (sets, updates, etc.)
+        const cancelledCount = await cancelPendingOperationsForExercise(id)
+        if (cancelledCount > 0) {
+            console.log(`[Sync] Cascade cancelled ${cancelledCount} operations for exercise ${id}`)
+        }
+
+        // 1. Cleanup local set logs (Atomic Set Logs)
         // Ensure strictly associated logs are removed locally to reflect UI state immediately
         await db.setLogs.where('planned_exercise_id').equals(id).delete()
 
@@ -255,7 +364,7 @@ export function useDatabase() {
         const isMongoObjectId = /^[a-f0-9]{24}$/.test(id)
 
         if (!entity.remote_id && !isMongoObjectId) {
-            // Cancel pending POST in syncQueue
+            // Cancel pending POST in syncQueue (if cascade didn't already get it)
             const pendingCreate = await db.syncQueue
                 .filter(item => item.context?.type === 'exercise_add' && item.context?.temp_id === id)
                 .first()
@@ -1010,17 +1119,13 @@ export function useDatabase() {
 
         const entity = await db.schedules.get(scheduleId)
 
-        // Deep Smart Deletion Prep: Get connected IDs before deleting data
-        const relatedExercises = await db.plannedExercises.where('schedule_id').equals(scheduleId).toArray()
-        const exerciseIds = relatedExercises.map(e => e.id)
-        if (entity?.remote_id) {
-            // Find exercises that might be using the remote ID (unlikely if locally created, but cover bases)
-            // Actually, local exercises usually use ULID as primary key.
-            // But if we have remote_id, good to know.
+        // 0. CASCADE CANCEL all pending operations for this schedule (exercises, sets, updates)
+        const cancelledCount = await cancelPendingOperationsForSchedule(scheduleId)
+        if (cancelledCount > 0) {
+            console.log(`[Sync] Deep cascade cancelled ${cancelledCount} operations for schedule ${scheduleId}`)
         }
 
-        // Delete local associated data first
-        // Query by local ID or remote ID to ensure cleanup
+        // 1. Delete local associated data
         const keys = [scheduleId]
         if (entity?.remote_id) keys.push(entity.remote_id)
 
@@ -1039,7 +1144,7 @@ export function useDatabase() {
         const isMongoObjectId = /^[a-f0-9]{24}$/.test(scheduleId)
 
         if (!entity.remote_id && !isMongoObjectId) {
-            // Cancel pending POST in syncQueue (Schedule Create)
+            // Cancel pending POST in syncQueue (Schedule Create) - if cascade didn't already get it
             const pendingCreate = await db.syncQueue
                 .filter(item => item.context?.type === 'schedule_create' && item.context?.schedule_id === scheduleId)
                 .first()
@@ -1047,33 +1152,6 @@ export function useDatabase() {
             if (pendingCreate) {
                 await removeSyncItem(pendingCreate.id)
                 console.log(`[Sync] Smart Deletion: Cancelled pending POST for schedule ${scheduleId}`)
-
-                // DEEP CLEAN: Also cancel pending creations for children (Exercises and Sets)
-                // 1. Cancel Exercise Adds
-                const pendingExercises = await db.syncQueue
-                    .filter(item => item.context?.type === 'exercise_add' && item.context?.schedule_id === scheduleId)
-                    .toArray()
-
-                for (const pEx of pendingExercises) {
-                    await removeSyncItem(pEx.id)
-                    console.log(`[Sync] Smart Deletion: Cancelled pending exercise add ${pEx.context?.temp_id}`)
-                }
-
-                // 2. Cancel Set Adds (linked by planned_exercise_id)
-                // We use the exerciseIds we gathered before deletion
-                if (exerciseIds.length > 0) {
-                    const pendingSets = await db.syncQueue
-                        .filter(item =>
-                            item.context?.type === 'set_add' &&
-                            exerciseIds.includes(item.context?.planned_exercise_id)
-                        )
-                        .toArray()
-
-                    for (const pSet of pendingSets) {
-                        await removeSyncItem(pSet.id)
-                        console.log(`[Sync] Smart Deletion: Cancelled pending set add ${pSet.context?.temp_id}`)
-                    }
-                }
             }
 
             // Delete locally
@@ -1363,6 +1441,11 @@ export function useDatabase() {
                         await removeSyncItem(item.id)
                         success++
                         console.log(`[SyncQueue] Already synced (409): ${item.url}`)
+                    } else if (item.method === 'DELETE' && response.status === 404) {
+                        // DELETE + 404 = Already deleted = Success (idempotent)
+                        await removeSyncItem(item.id)
+                        success++
+                        console.log(`[SyncQueue] Idempotent DELETE (404 = OK): ${item.url}`)
                     } else {
                         const errorText = await response.text()
                         await markSyncFailed(item.id, `HTTP ${response.status}: ${errorText}`)
