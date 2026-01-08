@@ -117,6 +117,7 @@ onMounted(() => {
           label="Schedule Session"
           color="primary"
           icon="i-heroicons-calendar-plus"
+          @click="router.push({ path: '/schedule', query: { member: memberId, new: 'true' } })"
         />
       </div>
     </div>
@@ -204,8 +205,20 @@ onMounted(() => {
         />
       </div>
 
+      <!-- XP Mountain (Strength Volume) -->
+      <MemberVolumeMountain :member-id="memberId" />
+
+      <!-- Recomposition Cross Chart (The Win) -->
+      <MemberRecompositionCross v-if="scans.length > 1" :scans="scans" />
+
       <!-- Trend Charts -->
       <MemberTrendCharts v-if="scans.length > 0" :scans="scans" />
+
+      <!-- Segmental Sparkline Grids -->
+      <div v-if="scans.length > 1" class="grid grid-cols-1 gap-4">
+        <MemberSegmentalGrid :scans="scans" type="lean" />
+        <MemberSegmentalGrid :scans="scans" type="fat" />
+      </div>
 
       <!-- InBody Scans -->
       <UCard>

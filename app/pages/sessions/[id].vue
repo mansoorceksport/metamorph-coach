@@ -288,14 +288,63 @@ async function persistSetLog(exerciseId: string, setIndex: number) {
         })
         console.log(`[Session] Persisted and synced set ${setIndex + 1} for ${exercise.name}`)
     } else {
-        // Fallback: This set exists locally but has no ID/Entry in Dexie atomic table yet.
-        // This likely means we are offline and haven't synced the sets from backend yet,
-        // OR it's a new set that hasn't been saved to Dexie setLogs yet.
-        // We should create it in Dexie now.
-        // But what ID? If we use random ULID, backend sync might fail if backend expects matched ID.
-        // However, since we implemented syncScheduleSets, we should have IDs if online.
-        console.warn(`[Session] Cannot sync atomic set - missing ID for ${exercise.name} set ${setIndex}`)
-        // TODO: Handle this edge case (Create local atomic log?)
+        // Set doesn't exist in set_logs collection - create it via API
+        // This handles sessions created before the InitializeSession fix
+        console.log(`[Session] Creating missing set_log for ${exercise.name} set ${setIndex + 1}`)
+        
+        try {
+            const token = useCookie('metamorph-token')
+            const headers: Record<string, string> = {}
+            if (token.value) {
+                headers['Authorization'] = `Bearer ${token.value}`
+            }
+            
+            // Use remoteId (MongoDB ID) for the API call
+            const exerciseApiId = exercise.remoteId || exerciseId
+            
+            // Create set via API
+            const newSet = await $fetch<any>(`/api/v1/pro/exercises/${exerciseApiId}/sets`, {
+                method: 'POST',
+                headers,
+                body: {
+                    client_id: `${exerciseId}-${setIndex}-${Date.now()}`, // Generate unique client_id
+                    set_index: setIndex + 1 // 1-based on backend
+                }
+            })
+            
+            if (newSet?.id) {
+                // Cache the ID locally
+                log.id = newSet.client_id || newSet.id
+                
+                // Save to Dexie setLogs
+                await db.setLogs.put({
+                    id: newSet.client_id || newSet.id,
+                    remote_id: newSet.id,
+                    sync_status: 'synced',
+                    planned_exercise_id: exerciseId,
+                    schedule_id: sessionId.value,
+                    member_id: newSet.member_id,
+                    exercise_id: exercise.exerciseId,
+                    set_index: setIndex + 1,
+                    weight: log.weight || 0,
+                    reps: log.reps || 0,
+                    remarks: '',
+                    completed: log.completed
+                })
+                
+                // Now update with actual values
+                await updateSetLogWithSync(newSet.client_id || newSet.id, {
+                    weight: log.weight || 0,
+                    reps: log.reps || 0,
+                    remarks: '',
+                    completed: log.completed
+                })
+                
+                console.log(`[Session] Created and synced new set ${setIndex + 1} for ${exercise.name}`)
+            }
+        } catch (createError) {
+            console.error(`[Session] Failed to create set_log for ${exercise.name}:`, createError)
+        }
     }
   } catch (error) {
     console.error('[Session] Failed to persist/sync set log:', error)
