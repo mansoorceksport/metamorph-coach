@@ -204,6 +204,9 @@ onMounted(() => {
         />
       </div>
 
+      <!-- Trend Charts -->
+      <MemberTrendCharts v-if="scans.length > 0" :scans="scans" />
+
       <!-- InBody Scans -->
       <UCard>
         <template #header>
