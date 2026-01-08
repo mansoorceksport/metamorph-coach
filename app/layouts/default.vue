@@ -20,8 +20,8 @@ const navItems = [
     icon: 'i-heroicons-clock'
   },
   {
-    label: 'Clients',
-    to: '/clients',
+    label: 'Members',
+    to: '/members',
     icon: 'i-heroicons-users'
   },
   {

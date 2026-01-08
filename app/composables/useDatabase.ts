@@ -905,7 +905,35 @@ export function useDatabase() {
     }
 
     /**
-     * Get all cached members for dropdown
+     * Get members as a reactive query (live updates)
+     */
+    function getMembers() {
+        const members = ref<CachedMember[]>([])
+        const loading = ref(true)
+        const error = ref<Error | null>(null)
+
+        if (import.meta.client) {
+            const subscription = liveQuery(async () => {
+                return await db.cachedMembers.orderBy('name').toArray()
+            }).subscribe({
+                next: (result) => {
+                    members.value = result
+                    loading.value = false
+                },
+                error: (err) => {
+                    error.value = err
+                    loading.value = false
+                }
+            })
+
+            onUnmounted(() => subscription.unsubscribe())
+        }
+
+        return { members, loading, error }
+    }
+
+    /**
+     * Get all cached members for dropdown (non-reactive)
      */
     async function getCachedMembers(): Promise<CachedMember[]> {
         if (!import.meta.client) return []
@@ -1595,6 +1623,7 @@ export function useDatabase() {
         createScheduleWithSync,
         deleteSchedule,
         deleteScheduleWithSync,
+        getMembers,
         getCachedMembers,
         updateScheduleStatusWithSync,
         saveExercise,
