@@ -28,7 +28,7 @@ function getStatusPriority(status: string): number {
 }
 
 // Use liveQuery for reactivity - schedules will update when data changes
-onMounted(() => {
+onMounted(async () => {
   if (!import.meta.client) return
   
   const today = new Date()
@@ -74,56 +74,90 @@ onMounted(() => {
   onUnmounted(() => {
     subscription.unsubscribe()
   })
+
+  // Fetch Dashboard Analytics
+  try {
+    const token = useCookie('metamorph-token')
+    const headers: Record<string, string> = {}
+    if (token.value) {
+      headers['Authorization'] = `Bearer ${token.value}`
+    }
+
+    const data = await $fetch<DashboardSummary>('/api/v1/pro/dashboard/summary', {
+      headers
+    })
+    dashboardData.value = data
+    console.log('[CommandCenter] Dashboard analytics loaded:', data)
+  } catch (error) {
+    console.error('[CommandCenter] Failed to load dashboard analytics:', error)
+  } finally {
+    isLoadingDashboard.value = false
+  }
 })
 
-// Mock Data for Analytics
-const risingStars = [
-  { id: 'rs1', name: 'Alex Wong', trend: 'up', metric: '-2.1% Body Fat' },
-  { id: 'rs2', name: 'Maria Garcia', trend: 'up', metric: '+1.5kg Muscle' },
-  { id: 'rs3', name: 'David Smith', trend: 'up', metric: 'PB Squat' },
-  { id: 'rs4', name: 'Linda Chen', trend: 'up', metric: 'Perfect Form' },
-  { id: 'rs5', name: 'Tom Baker', trend: 'up', metric: 'Consistency' }
-]
+// Dashboard Analytics API
+interface MemberAnalytics {
+  member_id: string
+  name: string
+  value: number
+  label: string
+  trend: string
+}
 
-const consistentMembers = [
-  { id: 'cm1', name: 'John D.', streak: '24 Days' },
-  { id: 'cm2', name: 'Sarah M.', streak: '18 Days' },
-  { id: 'cm3', name: 'Mike T.', streak: '15 Days' },
-  { id: 'cm4', name: 'Emily R.', streak: '14 Days' },
-  { id: 'cm5', name: 'Chris P.', streak: '12 Days' }
-]
+interface DashboardSummary {
+  rising_stars: MemberAnalytics[]
+  churn_risk: MemberAnalytics[]
+  intervention_needed: MemberAnalytics[]
+  strength_wins: MemberAnalytics[]
+  package_health: MemberAnalytics[]
+  consistent: MemberAnalytics[]
+}
 
-const interventionNeeded = [
-  { id: 'in1', name: 'Gary Oldman', issue: 'Stalled Progress', trend: 'down' },
-  { id: 'in2', name: 'Uma Thurman', issue: 'Skipped 3 Sessions', trend: 'down' },
-  { id: 'in3', name: 'Samuel L.', issue: 'Fatigue Signs', trend: 'down' },
-  { id: 'in4', name: 'Bruce W.', issue: 'Injury Risk', trend: 'down' },
-  { id: 'in5', name: 'Tony S.', issue: 'Diet Adherence', trend: 'down' }
-]
+const dashboardData = ref<DashboardSummary | null>(null)
+const isLoadingDashboard = ref(true)
 
-const churnRisk = [
-  { id: 'cr1', name: 'Sarah Connor', drop: '-35% vs Avg', lastSeen: '3 days ago' },
-  { id: 'cr2', name: 'Kyle Reese', drop: '-28% vs Avg', lastSeen: '5 days ago' },
-  { id: 'cr3', name: 'Ellen Ripley', drop: '-40% vs Avg', lastSeen: '1 week ago' },
-  { id: 'cr4', name: 'Dutch S.', drop: '-30% vs Avg', lastSeen: '4 days ago' },
-  { id: 'cr5', name: 'John Rambo', drop: '-26% vs Avg', lastSeen: '6 days ago' }
-]
+// Computed properties for each widget
+const risingStars = computed(() => dashboardData.value?.rising_stars?.map(m => ({
+  id: m.member_id,
+  name: m.name,
+  trend: m.trend,
+  metric: m.label
+})) || [])
 
-const packageHealth = [
-  { id: 'ph1', name: 'Rocky Balboa', sessions: 2, plan: '20 Pack' },
-  { id: 'ph2', name: 'Apollo Creed', sessions: 1, plan: '10 Pack' },
-  { id: 'ph3', name: 'Ivan Drago', sessions: 2, plan: 'Monthly' },
-  { id: 'ph4', name: 'Clubber Lang', sessions: 0, plan: '10 Pack' },
-  { id: 'ph5', name: 'Adonis Creed', sessions: 3, plan: '20 Pack' }
-]
+const consistentMembers = computed(() => dashboardData.value?.consistent?.map(m => ({
+  id: m.member_id,
+  name: m.name,
+  streak: m.label
+})) || [])
 
-const strengthWins = [
-  { id: 'sw1', name: 'Alex Wong', exercise: 'Deadlift', newWeight: '140kg', delta: '5kg' },
-  { id: 'sw2', name: 'Maria Garcia', exercise: 'Bench Press', newWeight: '55kg', delta: '2.5kg' },
-  { id: 'sw3', name: 'David Smith', exercise: 'Back Squat', newWeight: '120kg', delta: '5kg' },
-  { id: 'sw4', name: 'Sarah Jenkins', exercise: 'Hip Thrust', newWeight: '100kg', delta: '10kg' },
-  { id: 'sw5', name: 'Emily R.', exercise: 'Pull Up', newWeight: 'BW+10kg', delta: '2.5kg' }
-]
+const interventionNeeded = computed(() => dashboardData.value?.intervention_needed?.map(m => ({
+  id: m.member_id,
+  name: m.name,
+  issue: m.label,
+  trend: m.trend
+})) || [])
+
+const churnRisk = computed(() => dashboardData.value?.churn_risk?.map(m => ({
+  id: m.member_id,
+  name: m.name,
+  drop: m.label,
+  lastSeen: 'Recently'
+})) || [])
+
+const packageHealth = computed(() => dashboardData.value?.package_health?.map(m => ({
+  id: m.member_id,
+  name: m.name,
+  sessions: Math.round(m.value),
+  plan: m.label
+})) || [])
+
+const strengthWins = computed(() => dashboardData.value?.strength_wins?.map(m => ({
+  id: m.member_id,
+  name: m.name,
+  exercise: m.label.split(' ')[1] || 'Exercise', // Parse from label
+  newWeight: m.label.split(' ')[0] || `${m.value}kg`,
+  delta: '+PR'
+})) || [])
 
 // Member type for analytics cards
 interface AnalyticsMember {
@@ -292,7 +326,20 @@ const mockRecentPRs = [
                 <p class="text-xs text-slate-400 mt-1">Optimal Recomposition: Highest positive muscle gain and fat loss deltas.</p>
               </div>
             </template>
-           <ul class="space-y-3">
+           <!-- Loading State -->
+           <div v-if="isLoadingDashboard" class="space-y-3">
+             <div v-for="i in 3" :key="i" class="flex items-center gap-3 animate-pulse">
+               <div class="w-8 h-8 bg-gray-200 dark:bg-gray-700 rounded-full"></div>
+               <div class="flex-1 h-4 bg-gray-200 dark:bg-gray-700 rounded"></div>
+             </div>
+           </div>
+           <!-- Empty State -->
+           <div v-else-if="risingStars.length === 0" class="text-center py-6 text-gray-500 text-sm">
+             <UIcon name="i-heroicons-sparkles" class="w-8 h-8 mx-auto mb-2 text-gray-300" />
+             <p>No rising stars yet</p>
+           </div>
+           <!-- Data -->
+           <ul v-else class="space-y-3">
              <li 
                 v-for="member in risingStars" 
                 :key="member.id" 
