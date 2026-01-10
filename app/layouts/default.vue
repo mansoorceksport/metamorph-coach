@@ -3,6 +3,27 @@ const { signOut, checkPendingSync, forceSyncBeforeLogout } = useAuth()
 const toast = useToast()
 const { pendingSyncCount, isSyncing, isOnline, forceSyncNow } = useDatabase()
 
+// Sidebar collapse state - persisted in localStorage
+const isSidebarCollapsed = ref(false)
+
+// Load sidebar state from localStorage on mount
+onMounted(() => {
+  if (import.meta.client) {
+    const saved = localStorage.getItem('sidebar-collapsed')
+    if (saved) {
+      isSidebarCollapsed.value = saved === 'true'
+    }
+  }
+})
+
+// Toggle sidebar and persist
+const toggleSidebar = () => {
+  isSidebarCollapsed.value = !isSidebarCollapsed.value
+  if (import.meta.client) {
+    localStorage.setItem('sidebar-collapsed', String(isSidebarCollapsed.value))
+  }
+}
+
 // Logout warning modal state
 const showLogoutWarning = ref(false)
 const pendingLogoutCount = ref(0)
@@ -214,30 +235,49 @@ const handleForceSync = async () => {
 
     <div class="flex flex-1 overflow-hidden">
       <!-- Desktop Sidebar Navigation -->
-      <aside class="hidden lg:flex lg:flex-col w-64 border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950">
-        <nav class="p-6 flex-1 space-y-2">
+      <aside 
+        class="hidden lg:flex lg:flex-col border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 transition-all duration-300 ease-in-out"
+        :class="isSidebarCollapsed ? 'w-20' : 'w-64'"
+      >
+        <!-- Toggle Button -->
+        <div class="p-3 flex justify-end border-b border-gray-100 dark:border-gray-800">
+          <button 
+            @click="toggleSidebar"
+            class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            :title="isSidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'"
+          >
+            <UIcon 
+              :name="isSidebarCollapsed ? 'i-heroicons-chevron-right' : 'i-heroicons-chevron-left'" 
+              class="w-5 h-5 text-gray-500"
+            />
+          </button>
+        </div>
+        
+        <nav class="flex-1 space-y-2" :class="isSidebarCollapsed ? 'p-3' : 'p-6'">
           <NuxtLink
             v-for="item in navItems"
             :key="item.to"
             :to="item.to"
-            class="flex items-center gap-4 px-4 py-3 rounded-xl text-base font-medium transition-all duration-200"
+            class="flex items-center rounded-xl text-base font-medium transition-all duration-200"
             :class="[
+              isSidebarCollapsed ? 'justify-center p-3' : 'gap-4 px-4 py-3',
               $route.path === item.to 
                 ? 'bg-primary-50 dark:bg-primary-900/20 text-primary-600 dark:text-primary-400' 
                 : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/50 hover:text-gray-900 dark:hover:text-white'
             ]"
+            :title="isSidebarCollapsed ? item.label : ''"
           >
             <UIcon 
               :name="item.icon" 
               class="w-6 h-6 flex-shrink-0"
               :class="$route.path === item.to ? 'text-primary-500' : ''"
             />
-            <span>{{ item.label }}</span>
+            <span v-if="!isSidebarCollapsed">{{ item.label }}</span>
           </NuxtLink>
         </nav>
         
         <!-- Sidebar Sync Status Footer -->
-        <div v-if="pendingSyncCount > 0 || !isOnline" class="p-4 border-t border-gray-200 dark:border-gray-800">
+        <div v-if="(pendingSyncCount > 0 || !isOnline) && !isSidebarCollapsed" class="p-4 border-t border-gray-200 dark:border-gray-800">
           <div 
             class="flex items-center gap-3 p-3 rounded-lg"
             :class="!isOnline 
@@ -259,6 +299,22 @@ const handleForceSync = async () => {
             </div>
           </div>
         </div>
+        <!-- Collapsed Sync Indicator -->
+        <div v-else-if="(pendingSyncCount > 0 || !isOnline) && isSidebarCollapsed" class="p-3 border-t border-gray-200 dark:border-gray-800 flex justify-center">
+          <div 
+            class="w-10 h-10 rounded-full flex items-center justify-center"
+            :class="!isOnline 
+              ? 'bg-yellow-50 dark:bg-yellow-900/20' 
+              : 'bg-orange-50 dark:bg-orange-900/20'"
+            :title="!isOnline ? 'Offline' : `${pendingSyncCount} pending sync`"
+          >
+            <UIcon 
+              :name="!isOnline ? 'i-heroicons-wifi' : 'i-heroicons-cloud-arrow-up'" 
+              :class="!isOnline ? 'text-yellow-500' : 'text-orange-500'"
+              class="w-5 h-5" 
+            />
+          </div>
+        </div>
       </aside>
 
       <!-- Main Content Area -->
@@ -270,11 +326,28 @@ const handleForceSync = async () => {
     </div>
 
     <!-- Mobile Bottom Navigation -->
-    <nav class="lg:hidden fixed bottom-0 left-0 right-0 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950">
-      <div class="flex items-center">
-        <UNavigationMenu :items="navItems" orientation="horizontal" class="flex-1" />
+    <nav class="lg:hidden fixed bottom-0 left-0 right-0 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 safe-area-pb">
+      <div class="flex items-stretch justify-around">
+        <NuxtLink
+          v-for="item in navItems"
+          :key="item.to"
+          :to="item.to"
+          class="flex-1 flex flex-col items-center justify-center py-3 gap-1 transition-colors"
+          :class="$route.path === item.to 
+            ? 'text-primary-600 dark:text-primary-400' 
+            : 'text-gray-500 dark:text-gray-400'"
+        >
+          <UIcon 
+            :name="item.icon" 
+            class="w-6 h-6"
+          />
+          <span class="text-xs font-medium">{{ item.label }}</span>
+        </NuxtLink>
         <!-- Mobile Sync Indicator -->
-        <div v-if="pendingSyncCount > 0 || !isOnline" class="px-3 py-2">
+        <div 
+          v-if="pendingSyncCount > 0 || !isOnline" 
+          class="flex items-center justify-center px-4"
+        >
           <div 
             class="w-8 h-8 rounded-full flex items-center justify-center"
             :class="!isOnline 
