@@ -23,6 +23,7 @@
     "dexie": "^4.2.1",
     "firebase": "^12.7.0",
     "nuxt": "^4.2.2",
+    "tailwindcss": "^4.1.7",
     "ulid": "^3.0.2",
     "vue-chartjs": "^5.3.3"
   },

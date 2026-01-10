@@ -30,14 +30,14 @@ export function useExerciseLibrary() {
                 return await loadFromCache()
             }
 
-            // Fetch from API
+            // Fetch from API using proxy route (configured in nuxt.config.ts)
             const response = await $fetch<Array<{
                 id: string
                 name: string
                 muscle_group: string
                 equipment: string
                 video_url?: string
-            }>>('http://localhost:8080/v1/exercises', {
+            }>>('/api/v1/exercises', {
                 headers: {
                     Authorization: `Bearer ${token}`
                 }
@@ -121,14 +121,19 @@ export function useExerciseLibrary() {
     })
 
     /**
-     * Initialize library (load from cache then sync with API)
+     * Initialize library (load from cache, only sync with API if cache is empty)
      */
     async function initLibrary(): Promise<void> {
         // First load from cache for instant availability
-        await loadFromCache()
+        const cached = await loadFromCache()
 
-        // Then sync with API in background
-        fetchAndCacheExercises()
+        // Only sync with API if cache is empty (first time or cleared)
+        if (cached.length === 0) {
+            console.log('[ExerciseLibrary] Cache empty, fetching from API')
+            await fetchAndCacheExercises()
+        } else {
+            console.log(`[ExerciseLibrary] Using cached ${cached.length} exercises`)
+        }
     }
 
     return {
