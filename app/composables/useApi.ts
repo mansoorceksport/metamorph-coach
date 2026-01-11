@@ -52,7 +52,7 @@ export function useApi() {
     const baseUrl = config.public.apiBase || ''
 
     /**
-     * Make an authenticated API request
+     * Make an authenticated API request with automatic 401 retry
      */
     async function apiFetch<T>(
         endpoint: string,
@@ -60,7 +60,8 @@ export function useApi() {
             method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
             body?: any
             query?: Record<string, string>
-        } = {}
+        } = {},
+        _retried = false // Internal flag to prevent infinite retry
     ): Promise<T> {
         const token = metamorphToken.value
         if (!token) {
@@ -74,16 +75,56 @@ export function useApi() {
             })
         }
 
-        const response = await $fetch<T>(url.toString(), {
-            method: options.method || 'GET',
-            headers: {
-                'Authorization': `Bearer ${token}`,
-                'Content-Type': 'application/json'
-            },
-            body: options.body ? JSON.stringify(options.body) : undefined
-        })
+        try {
+            const response = await $fetch<T>(url.toString(), {
+                method: options.method || 'GET',
+                headers: {
+                    'Authorization': `Bearer ${token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: options.body ? JSON.stringify(options.body) : undefined,
+                credentials: 'include', // Include cookies for refresh
+            })
 
-        return response
+            return response
+        } catch (error: any) {
+            // Check for 401 and attempt token refresh if not already retried
+            if (error?.response?.status === 401 && !_retried) {
+                console.log('[API] Got 401, attempting token refresh...')
+
+                try {
+                    // Try to refresh the token
+                    const refreshResponse = await $fetch<{
+                        token: string
+                        expires_in: number
+                    }>(`${baseUrl}/v1/auth/refresh`, {
+                        method: 'POST',
+                        credentials: 'include',
+                    })
+
+                    if (refreshResponse?.token) {
+                        // Update the token cookie
+                        const tokenCookie = useCookie('metamorph-token', {
+                            maxAge: refreshResponse.expires_in || 900,
+                            path: '/',
+                            sameSite: 'lax'
+                        })
+                        tokenCookie.value = refreshResponse.token
+                        console.log('[API] Token refreshed, retrying original request...')
+
+                        // Retry the original request with new token
+                        return await apiFetch<T>(endpoint, options, true)
+                    }
+                } catch (refreshError) {
+                    console.error('[API] Token refresh failed:', refreshError)
+                    // Clear token and let the error propagate
+                    const tokenCookie = useCookie('metamorph-token')
+                    tokenCookie.value = null
+                }
+            }
+
+            throw error
+        }
     }
 
     // ============================================

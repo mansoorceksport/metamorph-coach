@@ -13,11 +13,11 @@ let authListenerInitialized = false
 export const useAuth = () => {
     const { auth } = useFirebase()
     const user = useState<User | null>('firebase-user', () => null)
-    // Configure cookie with proper options for dev/mobile access
+    // Configure cookie with proper options - short-lived access token
     const metamorphToken = useCookie<string | null>('metamorph-token', {
         sameSite: 'lax', // Allow cookie in same-site navigations
         secure: false,   // Allow over HTTP in development
-        maxAge: 60 * 60 * 24 * 7, // 7 days
+        maxAge: 60 * 15, // 15 minutes (matches access token expiry)
     })
     const loading = useState<boolean>('firebase-loading', () => true)
     const error = useState<string | null>('firebase-error', () => null)
@@ -49,24 +49,25 @@ export const useAuth = () => {
 
     const exchangeToken = async (firebaseIdToken: string) => {
         try {
-            const response = await $fetch<{ token: string }>(`${config.public.apiBase}/v1/auth/login`, {
+            const response = await $fetch<{
+                token: string
+                expires_in?: number
+            }>(`${config.public.apiBase}/v1/auth/login`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${firebaseIdToken}`,
                     'Accept': 'application/json'
-                }
+                },
+                credentials: 'include', // Include cookies for refresh token
             })
 
-            // Assuming response contains the token directly or in a field. 
-            // Based on OpenAPI it just says "OK" but usually returns a token.
-            // If the backend sets a cookie, we might not need to do anything manually.
-            // But if it returns JSON:
+            // Store the access token
             if (response?.token) {
                 metamorphToken.value = response.token
+                console.log('[Auth] Token exchanged, expires in:', response.expires_in || 900, 'seconds')
             }
         } catch (err: any) {
             console.error('Backend token exchange failed:', err)
-            // Don't block login strictly if verified by firebase, but functionality might be limited
             throw new Error('Failed to authenticate with backend')
         }
     }
@@ -215,6 +216,17 @@ export const useAuth = () => {
             if (import.meta.client) {
                 console.log('[Auth] Clearing local data on logout...')
                 await clearAllData()
+            }
+
+            // Call backend logout to revoke refresh token
+            try {
+                await $fetch(`${config.public.apiBase}/v1/auth/logout`, {
+                    method: 'POST',
+                    credentials: 'include', // Include refresh token cookie
+                })
+                console.log('[Auth] Backend logout successful')
+            } catch (e) {
+                console.warn('[Auth] Backend logout failed, continuing with local logout:', e)
             }
 
             await firebaseSignOut(auth)
