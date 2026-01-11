@@ -8,6 +8,9 @@ Sentry.init({
     // DSN from environment variable
     dsn: useRuntimeConfig().public.sentryDsn,
 
+    // Release version for tracking deploys
+    release: `metamorph-coach@${useRuntimeConfig().public.appVersion || '1.0.0'}`,
+
     // Performance Monitoring
     tracesSampleRate: 1.0, // Capture 100% of transactions (reduce in production)
 

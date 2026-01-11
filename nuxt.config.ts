@@ -18,8 +18,9 @@ export default defineNuxtConfig({
       firebaseMessagingSenderId: process.env.NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
       firebaseAppId: process.env.NUXT_PUBLIC_FIREBASE_APP_ID,
       apiBase: process.env.NUXT_PUBLIC_API_BASE || 'http://localhost:8080',
-      // Sentry DSN (public for client-side)
-      sentryDsn: process.env.SENTRY_DSN
+      // Sentry configuration
+      sentryDsn: process.env.SENTRY_DSN,
+      appVersion: process.env.APP_VERSION || '1.0.0'
     }
   },
 

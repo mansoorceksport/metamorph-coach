@@ -6,6 +6,7 @@ import {
     type User
 } from 'firebase/auth'
 import { clearAllData } from '~/utils/db'
+import * as Sentry from '@sentry/nuxt'
 
 // Global flag to prevent duplicate listener registration
 let authListenerInitialized = false
@@ -146,6 +147,13 @@ export const useAuth = () => {
 
             user.value = result.user
 
+            // Set Sentry user context for error tracking
+            Sentry.setUser({
+                id: result.user.uid,
+                email: result.user.email || undefined,
+                username: result.user.displayName || undefined
+            })
+
             // Await user data sync to ensure data is ready when user reaches dashboard
             await syncUserData()
 
@@ -234,6 +242,9 @@ export const useAuth = () => {
             await firebaseSignOut(auth)
             user.value = null
             metamorphToken.value = null
+
+            // Clear Sentry user context
+            Sentry.setUser(null)
 
             console.log('[Auth] Logout complete, all local data cleared')
             return { success: true }

@@ -3,6 +3,9 @@ FROM node:24-slim AS builder
 
 WORKDIR /app
 
+# Build arguments for version tracking
+ARG APP_VERSION=1.0.0
+
 # Install pnpm and build dependencies
 RUN npm install -g pnpm && \
     apt-get update && \
@@ -18,6 +21,9 @@ RUN pnpm install --frozen-lockfile --ignore-scripts || pnpm install --no-frozen-
 # Copy source code
 COPY . .
 
+# Set version for Sentry release tracking
+ENV APP_VERSION=${APP_VERSION}
+
 # Manually prepare and build (without oxc-parser dependency)
 ENV NUXT_ESLINT_ENABLED=false
 RUN pnpm build
@@ -26,6 +32,10 @@ RUN pnpm build
 FROM node:24-slim
 
 WORKDIR /app
+
+# Pass version to runtime
+ARG APP_VERSION=1.0.0
+ENV APP_VERSION=${APP_VERSION}
 
 # Copy built output only (no node_modules needed at runtime)
 COPY --from=builder /app/.output ./.output
