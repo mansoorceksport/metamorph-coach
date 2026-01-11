@@ -49,10 +49,12 @@ export const useAuth = () => {
 
     const exchangeToken = async (firebaseIdToken: string) => {
         try {
+            // Use proxy path to ensure cookies are set on the same domain
+            // This ensures refresh token cookie works correctly
             const response = await $fetch<{
                 token: string
                 expires_in?: number
-            }>(`${config.public.apiBase}/v1/auth/login`, {
+            }>('/api/v1/auth/login', {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${firebaseIdToken}`,
@@ -220,7 +222,7 @@ export const useAuth = () => {
 
             // Call backend logout to revoke refresh token
             try {
-                await $fetch(`${config.public.apiBase}/v1/auth/logout`, {
+                await $fetch('/api/v1/auth/logout', {
                     method: 'POST',
                     credentials: 'include', // Include refresh token cookie
                 })

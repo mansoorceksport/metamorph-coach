@@ -28,6 +28,7 @@ export default defineNuxtConfig({
 
   routeRules: {
     '/': { prerender: true },
+    // Proxy API requests to backend - Nitro automatically forwards cookies
     '/api/v1/**': { proxy: `${process.env.NUXT_PUBLIC_API_BASE || 'http://localhost:8080'}/v1/**` }
   },
 
