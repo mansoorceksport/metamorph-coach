@@ -5,7 +5,8 @@ export default defineNuxtConfig({
     '@nuxt/ui',
     '@nuxt/hints',
     '@nuxt/image',
-    '@nuxt/test-utils'
+    '@nuxt/test-utils',
+    '@sentry/nuxt/module'
   ],
 
   runtimeConfig: {
@@ -16,7 +17,17 @@ export default defineNuxtConfig({
       firebaseStorageBucket: process.env.NUXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
       firebaseMessagingSenderId: process.env.NUXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
       firebaseAppId: process.env.NUXT_PUBLIC_FIREBASE_APP_ID,
-      apiBase: process.env.NUXT_PUBLIC_API_BASE || 'http://localhost:8080'
+      apiBase: process.env.NUXT_PUBLIC_API_BASE || 'http://localhost:8080',
+      // Sentry DSN (public for client-side)
+      sentryDsn: process.env.SENTRY_DSN
+    }
+  },
+
+  // Sentry configuration
+  sentry: {
+    sourceMapsUploadOptions: {
+      org: 'metamorph',
+      project: 'metamorph-coach'
     }
   },
 
@@ -41,5 +52,10 @@ export default defineNuxtConfig({
         braceStyle: '1tbs'
       }
     }
+  },
+
+  // Enable source maps for Sentry stack traces
+  sourcemap: {
+    client: true
   }
 })
