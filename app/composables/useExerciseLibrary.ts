@@ -63,11 +63,27 @@ export function useExerciseLibrary() {
                 }
             }
 
-            // Bulk upsert
+            // Get current exercise IDs from API
+            const apiExerciseIds = new Set(exercises.map(ex => ex.id))
+
+            // Get all local exercise IDs
+            const localExercises = await db.exercises.toArray()
+            const localExerciseIds = localExercises.map(ex => ex.id)
+
+            // Find exercises that exist locally but not on API (deleted)
+            const deletedIds = localExerciseIds.filter(id => !apiExerciseIds.has(id))
+
+            // Delete removed exercises from local DB
+            if (deletedIds.length > 0) {
+                await db.exercises.bulkDelete(deletedIds)
+                console.log(`[ExerciseLibrary] Removed ${deletedIds.length} deleted exercises from local DB`)
+            }
+
+            // Bulk upsert remaining exercises
             await db.exercises.bulkPut(exercises)
 
             exerciseLibrary.value = exercises
-            console.log(`[ExerciseLibrary] Cached ${exercises.length} exercises`)
+            console.log(`[ExerciseLibrary] Synced ${exercises.length} exercises`)
 
             return exercises
         } catch (error: any) {
@@ -136,15 +152,31 @@ export function useExerciseLibrary() {
         }
     }
 
+    /**
+     * Force sync with API (used after creating/updating exercises)
+     * This always fetches from API and updates local DB
+     */
+    async function forceSync(): Promise<void> {
+        console.log('[ExerciseLibrary] Force syncing with API...')
+        await fetchAndCacheExercises()
+    }
+
     return {
+        // State (with aliases for convenience)
+        exercises: exerciseLibrary,
+        loading: isLoadingLibrary,
+        error: libraryError,
+        // Legacy names
         exerciseLibrary,
         isLoadingLibrary,
         libraryError,
+        // Methods
         fetchAndCacheExercises,
         loadFromCache,
         getByMuscleGroup,
         searchExercises,
         muscleGroups,
-        initLibrary
+        initLibrary,
+        forceSync
     }
 }
