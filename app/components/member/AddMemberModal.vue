@@ -29,22 +29,25 @@ const formErrors = reactive({
 
 // Load packages on modal open
 async function loadPackages() {
-  if (packages.value.length > 0) return // Already loaded
+  if (packages.value && packages.value.length > 0) return // Already loaded
   
   isLoadingPackages.value = true
   const token = useCookie('metamorph-token')
   try {
-    packages.value = await $fetch<any[]>('/api/v1/pro/packages', {
+    const response = await $fetch<any[]>('/api/v1/pro/packages', {
       headers: {
         Authorization: `Bearer ${token.value}`
       }
     })
+    // Ensure we always have an array (API might return null)
+    packages.value = response || []
   } catch (error: any) {
     toast.add({
       title: 'Failed to load packages',
       description: error.data?.error || error.message,
       color: 'warning'
     })
+    packages.value = [] // Ensure array on error
   } finally {
     isLoadingPackages.value = false
   }
