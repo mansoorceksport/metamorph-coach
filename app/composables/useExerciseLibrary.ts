@@ -37,6 +37,7 @@ export function useExerciseLibrary() {
                 muscle_group: string
                 equipment: string
                 video_url?: string
+                reference_url?: string
             }>>('/api/v1/exercises', {
                 headers: {
                     Authorization: `Bearer ${token}`
@@ -50,6 +51,7 @@ export function useExerciseLibrary() {
                 muscle_group: ex.muscle_group,
                 equipment: ex.equipment,
                 video_url: ex.video_url,
+                reference_url: ex.reference_url,
                 personal_best_weight: 0,
                 last_3_weights_history: []
             }))

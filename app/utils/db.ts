@@ -38,6 +38,7 @@ export interface Exercise {
     muscle_group: string
     equipment: string
     video_url?: string
+    reference_url?: string // Image URL or page link showing the movement
     // Augmented fields for PB alerts
     personal_best_weight: number
     last_3_weights_history: number[] // For velocity/trend analysis

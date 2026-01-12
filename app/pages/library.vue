@@ -45,6 +45,8 @@ const filteredExercises = computed(() => {
 const isModalOpen = ref(false)
 const isSubmitting = ref(false)
 const submitError = ref<string | null>(null)
+const isEditMode = ref(false)
+const editingExerciseId = ref<string | null>(null)
 
 // Delete state
 const isDeleteModalOpen = ref(false)
@@ -56,7 +58,8 @@ const form = reactive({
     name: '',
     muscle_group: '',
     equipment: '',
-    video_url: ''
+    video_url: '',
+    reference_url: ''
 })
 
 // Form dropdown options
@@ -70,15 +73,31 @@ onMounted(async () => {
 
 // Open add modal
 function openModal() {
+    isEditMode.value = false
+    editingExerciseId.value = null
     form.name = ''
     form.muscle_group = ''
     form.equipment = ''
     form.video_url = ''
+    form.reference_url = ''
     submitError.value = null
     isModalOpen.value = true
 }
 
-// Submit form
+// Open edit modal
+function openEditModal(exercise: any) {
+    isEditMode.value = true
+    editingExerciseId.value = exercise.id
+    form.name = exercise.name
+    form.muscle_group = exercise.muscle_group
+    form.equipment = exercise.equipment
+    form.video_url = exercise.video_url || ''
+    form.reference_url = exercise.reference_url || ''
+    submitError.value = null
+    isModalOpen.value = true
+}
+
+// Submit form (create or update)
 async function submitExercise() {
     if (!form.name.trim()) {
         submitError.value = 'Exercise name is required'
@@ -98,22 +117,34 @@ async function submitExercise() {
 
     try {
         const { apiFetch } = useApi()
-        await apiFetch('/v1/exercises', {
-            method: 'POST',
-            body: {
-                name: form.name.trim(),
-                muscle_group: form.muscle_group,
-                equipment: form.equipment,
-                video_url: form.video_url.trim() || ''
-            }
-        })
+        const payload = {
+            name: form.name.trim(),
+            muscle_group: form.muscle_group,
+            equipment: form.equipment,
+            video_url: form.video_url.trim() || '',
+            reference_url: form.reference_url.trim() || ''
+        }
+
+        if (isEditMode.value && editingExerciseId.value) {
+            // Update existing exercise
+            await apiFetch(`/v1/exercises/${editingExerciseId.value}`, {
+                method: 'PUT',
+                body: payload
+            })
+        } else {
+            // Create new exercise
+            await apiFetch('/v1/exercises', {
+                method: 'POST',
+                body: payload
+            })
+        }
 
         // Force sync to update local IndexedDB
         await forceSync()
         isModalOpen.value = false
     } catch (error: any) {
-        console.error('Failed to create exercise:', error)
-        submitError.value = error?.data?.error || 'Failed to create exercise'
+        console.error('Failed to save exercise:', error)
+        submitError.value = error?.data?.error || 'Failed to save exercise'
     } finally {
         isSubmitting.value = false
     }
@@ -246,93 +277,116 @@ function getMuscleColor(group: string): string {
       <div
         v-for="exercise in filteredExercises"
         :key="exercise.id"
-        class="group relative bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 hover:shadow-lg hover:border-primary-300 dark:hover:border-primary-600 transition-all duration-200"
+        class="group relative bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden hover:shadow-lg hover:border-primary-300 dark:hover:border-primary-600 transition-all duration-200"
       >
-        <!-- Delete button (top right) -->
-        <button
-          class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-400 hover:text-red-500"
-          title="Delete exercise"
-          @click="confirmDelete({ id: exercise.id, name: exercise.name })"
-        >
-          <UIcon name="i-lucide-trash-2" class="w-4 h-4" />
-        </button>
-
-        <!-- Exercise icon and name -->
-        <div class="flex items-start gap-3 mb-3">
-          <div class="p-2 bg-gray-100 dark:bg-gray-700 rounded-lg">
-            <UIcon
-              :name="getMuscleIcon(exercise.muscle_group)"
-              :class="['w-6 h-6', getMuscleColor(exercise.muscle_group)]"
-            />
-          </div>
-          <div class="flex-1 min-w-0">
-            <h3 class="font-semibold text-gray-900 dark:text-white truncate">
-              {{ exercise.name }}
-            </h3>
-            <p class="text-sm text-gray-500 dark:text-gray-400">
-              {{ exercise.muscle_group }}
-            </p>
-          </div>
-        </div>
-
-        <!-- Equipment -->
-        <div class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
-          <UIcon name="i-lucide-wrench" class="w-4 h-4 text-gray-400" />
-          <span>{{ exercise.equipment }}</span>
-        </div>
-
-        <!-- Video link -->
-        <div v-if="exercise.video_url" class="mt-2">
-          <a
-            :href="exercise.video_url"
-            target="_blank"
-            class="inline-flex items-center gap-1.5 text-sm text-red-500 hover:text-red-600"
+        <!-- Action buttons (top right) -->
+        <div class="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1 z-10">
+          <button
+            class="p-1.5 rounded-lg bg-white/80 dark:bg-gray-900/80 hover:bg-primary-100 dark:hover:bg-primary-900/30 text-gray-400 hover:text-primary-600"
+            title="Edit exercise"
+            @click="openEditModal(exercise)"
           >
-            <UIcon name="i-lucide-play-circle" class="w-4 h-4" />
-            <span>Watch Video</span>
-          </a>
+            <UIcon name="i-lucide-pencil" class="w-4 h-4" />
+          </button>
+          <button
+            class="p-1.5 rounded-lg bg-white/80 dark:bg-gray-900/80 hover:bg-red-100 dark:hover:bg-red-900/30 text-gray-400 hover:text-red-500"
+            title="Delete exercise"
+            @click="confirmDelete({ id: exercise.id, name: exercise.name })"
+          >
+            <UIcon name="i-lucide-trash-2" class="w-4 h-4" />
+          </button>
+        </div>
+
+        <!-- Reference Image (if image URL) -->
+        <div v-if="exercise.reference_url && exercise.reference_url.match(/\.(jpg|jpeg|png|gif|webp)$/i)" class="aspect-video w-full overflow-hidden bg-gray-100 dark:bg-gray-700">
+          <img 
+            :src="exercise.reference_url" 
+            :alt="exercise.name"
+            class="w-full h-full object-cover"
+          />
+        </div>
+
+        <!-- Card Content -->
+        <div class="p-4">
+          <!-- Exercise icon and name -->
+          <div class="flex items-start gap-3 mb-3">
+            <div class="p-2 bg-gray-100 dark:bg-gray-700 rounded-lg">
+              <UIcon
+                :name="getMuscleIcon(exercise.muscle_group)"
+                :class="['w-6 h-6', getMuscleColor(exercise.muscle_group)]"
+              />
+            </div>
+            <div class="flex-1 min-w-0">
+              <h3 class="font-semibold text-gray-900 dark:text-white truncate">
+                {{ exercise.name }}
+              </h3>
+              <p class="text-sm text-gray-500 dark:text-gray-400">
+                {{ exercise.muscle_group }}
+              </p>
+            </div>
+          </div>
+
+          <!-- Equipment -->
+          <div class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+            <UIcon name="i-lucide-wrench" class="w-4 h-4 text-gray-400" />
+            <span>{{ exercise.equipment }}</span>
+          </div>
+
+          <!-- Video link -->
+          <div v-if="exercise.video_url" class="mt-2">
+            <a
+              :href="exercise.video_url"
+              target="_blank"
+              class="inline-flex items-center gap-1.5 text-sm text-red-500 hover:text-red-600"
+            >
+              <UIcon name="i-lucide-play-circle" class="w-4 h-4" />
+              <span>Watch Video</span>
+            </a>
+          </div>
+
+          <!-- Reference link (non-image URLs) -->
+          <div v-if="exercise.reference_url && !exercise.reference_url.match(/\.(jpg|jpeg|png|gif|webp)$/i)" class="mt-2">
+            <a
+              :href="exercise.reference_url"
+              target="_blank"
+              class="inline-flex items-center gap-1.5 text-sm text-primary-500 hover:text-primary-600"
+            >
+              <UIcon name="i-lucide-external-link" class="w-4 h-4" />
+              <span>View Guide</span>
+            </a>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Add Exercise Modal -->
-    <UModal v-model:open="isModalOpen">
+    <!-- Add/Edit Exercise Modal -->
+    <UModal v-model:open="isModalOpen" class="sm:max-w-lg">
       <template #content>
-        <div class="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl w-full max-w-md mx-auto overflow-hidden">
-          <!-- Modal Header -->
-          <div class="bg-gradient-to-r from-primary-500 to-primary-600 px-6 py-4">
-            <div class="flex items-center justify-between">
-              <div class="flex items-center gap-3">
-                <div class="p-2 bg-white/20 rounded-lg">
-                  <UIcon name="i-lucide-plus" class="w-5 h-5 text-white" />
-                </div>
-                <h2 class="text-xl font-semibold text-white">Add New Exercise</h2>
-              </div>
-              <button
-                class="p-1.5 rounded-lg hover:bg-white/20 transition-colors"
-                @click="isModalOpen = false"
-              >
-                <UIcon name="i-lucide-x" class="w-5 h-5 text-white" />
-              </button>
+        <div class="p-6 space-y-4">
+          <!-- Header -->
+          <div class="flex items-center gap-3 mb-4">
+            <div class="w-12 h-12 rounded-full bg-primary-100 dark:bg-primary-900/30 flex items-center justify-center">
+              <UIcon :name="isEditMode ? 'i-lucide-pencil' : 'i-lucide-plus'" class="w-6 h-6 text-primary-600" />
+            </div>
+            <div>
+              <h2 class="text-xl font-bold text-gray-900 dark:text-white">{{ isEditMode ? 'Edit Exercise' : 'Add New Exercise' }}</h2>
+              <p class="text-sm text-gray-500">{{ isEditMode ? 'Update exercise details' : 'Add to your exercise library' }}</p>
             </div>
           </div>
 
-          <!-- Modal Body -->
-          <div class="p-6 space-y-5">
-            <!-- Error Alert -->
-            <UAlert
-              v-if="submitError"
-              color="error"
-              icon="i-lucide-alert-circle"
-              :title="submitError"
-              class="mb-4"
-            />
+          <!-- Error Alert -->
+          <UAlert
+            v-if="submitError"
+            color="error"
+            icon="i-lucide-alert-circle"
+            :title="submitError"
+            class="mb-4"
+          />
 
+          <form @submit.prevent="submitExercise" class="space-y-4">
             <!-- Exercise Name -->
-            <div class="space-y-2">
-              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                Exercise Name <span class="text-red-500">*</span>
-              </label>
+            <div>
+              <label class="block text-sm font-medium mb-1">Exercise Name <span class="text-red-500">*</span></label>
               <UInput
                 v-model="form.name"
                 placeholder="e.g., Barbell Squat"
@@ -340,12 +394,10 @@ function getMuscleColor(group: string): string {
               />
             </div>
 
-            <!-- Muscle Group & Equipment Grid -->
+            <!-- Muscle Group & Equipment -->
             <div class="grid grid-cols-2 gap-4">
-              <div class="space-y-2">
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Muscle Group <span class="text-red-500">*</span>
-                </label>
+              <div>
+                <label class="block text-sm font-medium mb-1">Muscle Group <span class="text-red-500">*</span></label>
                 <USelect
                   v-model="form.muscle_group"
                   :items="muscleGroups"
@@ -354,10 +406,8 @@ function getMuscleColor(group: string): string {
                 />
               </div>
 
-              <div class="space-y-2">
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
-                  Equipment <span class="text-red-500">*</span>
-                </label>
+              <div>
+                <label class="block text-sm font-medium mb-1">Equipment <span class="text-red-500">*</span></label>
                 <USelect
                   v-model="form.equipment"
                   :items="equipmentOptions"
@@ -368,8 +418,8 @@ function getMuscleColor(group: string): string {
             </div>
 
             <!-- Video URL -->
-            <div class="space-y-2">
-              <label class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+            <div>
+              <label class="block text-sm font-medium mb-1">
                 Video URL
                 <span class="text-gray-400 font-normal">(optional)</span>
               </label>
@@ -379,24 +429,39 @@ function getMuscleColor(group: string): string {
                 size="lg"
               />
             </div>
-          </div>
 
-          <!-- Modal Footer -->
-          <div class="px-6 py-4 bg-gray-50 dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 flex justify-end gap-3">
-            <UButton
-              label="Cancel"
-              color="neutral"
-              variant="ghost"
-              @click="isModalOpen = false"
-            />
-            <UButton
-              label="Add Exercise"
-              color="primary"
-              icon="i-lucide-plus"
-              :loading="isSubmitting"
-              @click="submitExercise"
-            />
-          </div>
+            <!-- Reference URL -->
+            <div>
+              <label class="block text-sm font-medium mb-1">
+                Reference URL
+                <span class="text-gray-400 font-normal">(optional)</span>
+              </label>
+              <UInput
+                v-model="form.reference_url"
+                placeholder="https://weighttraining.guide/exercises/..."
+                size="lg"
+              />
+              <p class="text-xs text-gray-500 mt-1">Image URL or link to exercise guide</p>
+            </div>
+
+            <!-- Actions -->
+            <div class="flex gap-3 pt-4">
+              <UButton
+                label="Cancel"
+                color="neutral"
+                variant="outline"
+                class="flex-1"
+                @click="isModalOpen = false"
+              />
+              <UButton
+                type="submit"
+                :label="isEditMode ? 'Save Changes' : 'Add Exercise'"
+                color="primary"
+                class="flex-1"
+                :loading="isSubmitting"
+              />
+            </div>
+          </form>
         </div>
       </template>
     </UModal>
