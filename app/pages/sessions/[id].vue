@@ -1059,7 +1059,8 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
         </div>
 
         <!-- Start Session Button (Sticky) -->
-        <div class="fixed bottom-4 left-0 right-0 px-4 lg:left-64">
+        <!-- On mobile, bottom-20 (80px) to clear bottom nav; on desktop bottom-4 -->
+        <div class="fixed bottom-20 md:bottom-4 left-0 right-0 px-4 lg:left-64 z-40">
           <div class="max-w-4xl mx-auto">
             <UButton
               label="Start Session"
