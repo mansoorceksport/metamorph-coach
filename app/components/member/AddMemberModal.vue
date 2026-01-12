@@ -27,6 +27,20 @@ const formErrors = reactive({
   packageId: ''
 })
 
+// Format price in Indonesian Rupiah
+function formatIDR(price: number): string {
+  if (!price) return 'Gratis'
+  return `Rp ${price.toLocaleString('id-ID')}`
+}
+
+// Package options for dropdown
+const packageOptions = computed(() => {
+  return packages.value.map(pkg => ({
+    value: pkg.id,
+    label: `${pkg.name} | ${pkg.total_sessions} sesi | ${formatIDR(pkg.price)}`
+  }))
+})
+
 // Load packages on modal open
 async function loadPackages() {
   if (packages.value && packages.value.length > 0) return // Already loaded
@@ -143,7 +157,7 @@ watch(() => props.open, (isOpen) => {
 </script>
 
 <template>
-  <UModal :open="props.open" @update:open="$emit('close')">
+  <UModal :open="props.open" @update:open="$emit('close')" class="sm:max-w-lg">
     <template #content>
       <div class="p-6 space-y-4">
         <div class="flex items-center gap-3 mb-4">
@@ -182,7 +196,7 @@ watch(() => props.open, (isOpen) => {
             <p v-if="formErrors.email" class="text-sm text-red-500 mt-1">{{ formErrors.email }}</p>
           </div>
 
-          <!-- Package Selection -->
+          <!-- Package Selection (Dropdown) -->
           <div>
             <label class="block text-sm font-medium mb-2">Package <span class="text-red-500">*</span></label>
             
@@ -196,39 +210,15 @@ watch(() => props.open, (isOpen) => {
               <p class="text-sm text-amber-700 dark:text-amber-300">No packages available. Contact your tenant admin.</p>
             </div>
 
-            <div v-else class="space-y-2 max-h-48 overflow-y-auto">
-              <div
-                v-for="pkg in packages"
-                :key="pkg.id"
-                class="p-3 border rounded-lg cursor-pointer transition-all"
-                :class="form.packageId === pkg.id 
-                  ? 'border-primary-500 bg-primary-50 dark:bg-primary-900/20' 
-                  : 'border-gray-200 dark:border-gray-700 hover:border-gray-300'"
-                @click="form.packageId = pkg.id"
-              >
-                <div class="flex items-center justify-between">
-                  <div>
-                    <h4 class="font-medium text-sm">{{ pkg.name }}</h4>
-                    <p class="text-xs text-gray-500">{{ pkg.total_sessions }} sessions</p>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <span class="text-sm font-semibold text-primary-600">{{ pkg.price ? `$${pkg.price}` : 'Free' }}</span>
-                    <div 
-                      class="w-4 h-4 rounded-full border-2 flex items-center justify-center"
-                      :class="form.packageId === pkg.id 
-                        ? 'border-primary-500 bg-primary-500' 
-                        : 'border-gray-300'"
-                    >
-                      <UIcon 
-                        v-if="form.packageId === pkg.id" 
-                        name="i-heroicons-check" 
-                        class="w-2.5 h-2.5 text-white" 
-                      />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <USelect
+              v-else
+              v-model="form.packageId"
+              :items="packageOptions"
+              placeholder="Pilih paket..."
+              size="lg"
+              class="w-full"
+              :color="formErrors.packageId ? 'error' : 'primary'"
+            />
             <p v-if="formErrors.packageId" class="text-sm text-red-500 mt-1">{{ formErrors.packageId }}</p>
           </div>
 
