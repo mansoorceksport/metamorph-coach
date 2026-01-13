@@ -49,6 +49,11 @@ const navItems = [
     label: 'Library',
     to: '/library',
     icon: 'i-heroicons-book-open'
+  },
+  {
+    label: 'Settings',
+    to: '/settings',
+    icon: 'i-heroicons-cog-6-tooth'
   }
 ]
 

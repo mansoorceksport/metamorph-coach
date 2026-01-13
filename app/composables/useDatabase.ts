@@ -1540,6 +1540,114 @@ export function useDatabase() {
     }
 
     /**
+     * Trigger a full resync of all local data
+     * This is useful after backend data fixes to ensure everything is in sync
+     * It will re-queue all synced schedules, exercises, and sets for upload
+     */
+    async function triggerFullResync(): Promise<{ success: number; failed: number }> {
+        if (!import.meta.client) return { success: 0, failed: 0 }
+
+        console.log('[FullResync] Starting full data resync...')
+        const config = useRuntimeConfig()
+        const baseUrl = config.public.apiBase || ''
+
+        let queuedCount = 0
+
+        // 1. Get all schedules that have been synced (have remote_id)
+        const syncedSchedules = await db.schedules
+            .filter(s => s.remote_id !== null && s.sync_status === 'synced')
+            .toArray()
+
+        console.log(`[FullResync] Found ${syncedSchedules.length} synced schedules to re-sync`)
+
+        // 2. Re-queue each schedule for resync (just update the schedule data)
+        for (const schedule of syncedSchedules) {
+            await queueSync({
+                method: 'PUT',
+                url: `${baseUrl}/v1/pro/schedules/${schedule.remote_id}`,
+                body: JSON.stringify({
+                    start_time: schedule.start_time,
+                    end_time: schedule.end_time,
+                    session_goal: schedule.session_goal,
+                    status: schedule.status,
+                    coach_remarks: schedule.coach_remarks
+                }),
+                priority: 'low',
+                context: {
+                    type: 'schedule_resync',
+                    schedule_id: schedule.id,
+                    remote_id: schedule.remote_id
+                }
+            })
+            queuedCount++
+        }
+
+        // 3. Get all synced planned exercises
+        const syncedExercises = await db.plannedExercises
+            .filter(e => e.remote_id !== null && e.sync_status === 'synced')
+            .toArray()
+
+        console.log(`[FullResync] Found ${syncedExercises.length} synced exercises to re-sync`)
+
+        for (const exercise of syncedExercises) {
+            await queueSync({
+                method: 'PUT',
+                url: `${baseUrl}/v1/pro/exercises/${exercise.remote_id}`,
+                body: JSON.stringify({
+                    target_sets: exercise.target_sets,
+                    target_reps: exercise.target_reps,
+                    rest_seconds: exercise.rest_seconds,
+                    notes: exercise.notes,
+                    order: exercise.order
+                }),
+                priority: 'low',
+                context: {
+                    type: 'exercise_resync',
+                    exercise_id: exercise.id,
+                    remote_id: exercise.remote_id
+                }
+            })
+            queuedCount++
+        }
+
+        // 4. Get all synced set logs
+        const syncedSets = await db.setLogs
+            .filter(s => s.remote_id !== null && s.sync_status === 'synced')
+            .toArray()
+
+        console.log(`[FullResync] Found ${syncedSets.length} synced sets to re-sync`)
+
+        for (const setLog of syncedSets) {
+            await queueSync({
+                method: 'PUT',
+                url: `${baseUrl}/v1/pro/sets/${setLog.remote_id}`,
+                body: JSON.stringify({
+                    weight: setLog.weight,
+                    reps: setLog.reps,
+                    remarks: setLog.remarks,
+                    completed: setLog.completed
+                }),
+                priority: 'low',
+                context: {
+                    type: 'set_resync',
+                    set_id: setLog.id,
+                    remote_id: setLog.remote_id
+                }
+            })
+            queuedCount++
+        }
+
+        console.log(`[FullResync] Queued ${queuedCount} items for resync, now processing...`)
+
+        // 5. Process the queue
+        await refreshPendingCount()
+        const result = await processSyncQueue()
+
+        console.log(`[FullResync] Complete: ${result.success} synced, ${result.failed} failed`)
+        return result
+    }
+
+    /**
      * Refresh the pending sync count
      */
     async function refreshPendingCount(): Promise<void> {
@@ -1650,6 +1758,7 @@ export function useDatabase() {
         getDeadLetterItems,
         resetDeadLetterItems,
         forceSyncNow,
+        triggerFullResync,
         refreshPendingCount,
 
         // Bulk operations

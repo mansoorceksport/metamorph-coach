@@ -17,6 +17,7 @@ const statusOptions = [
   { label: 'All Status', value: 'all' },
   { label: 'Scheduled', value: 'scheduled' },
   { label: 'In Progress', value: 'in-progress' },
+  { label: 'Pending', value: 'pending' },
   { label: 'Completed', value: 'completed' },
   { label: 'Cancelled', value: 'cancelled' },
   { label: 'No Show', value: 'no-show' }
@@ -215,7 +216,7 @@ async function handleDeleteSchedule() {
 const statusPriority: Record<string, number> = {
   'in-progress': 0,
   'scheduled': 1,
-  'pending_confirmation': 2,
+  'pending': 2,
   'completed': 3,
   'cancelled': 4,
   'no-show': 5
@@ -279,8 +280,9 @@ function getStatusColor(status: string) {
     case 'completed': return 'success'
     case 'in-progress': return 'info'
     case 'scheduled': return 'primary'
+    case 'pending': return 'warning'
     case 'cancelled': return 'error'
-    case 'no-show': return 'warning'
+    case 'no-show': return 'neutral'
     default: return 'neutral'
   }
 }
@@ -397,6 +399,7 @@ function clearFilters() {
             'border-l-4 hover:shadow-md transition-all cursor-pointer hover:scale-[1.01]',
             schedule.status === 'completed' ? 'border-l-green-500' : 
             schedule.status === 'in-progress' ? 'border-l-blue-500' :
+            schedule.status === 'pending' ? 'border-l-amber-500' :
             schedule.status === 'cancelled' ? 'border-l-red-500' :
             schedule.status === 'no-show' ? 'border-l-yellow-500' :
             'border-l-primary-500'

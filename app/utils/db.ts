@@ -18,7 +18,7 @@ export interface Schedule {
     member_id: string
     start_time: string // ISO datetime
     end_time?: string
-    status: 'scheduled' | 'in-progress' | 'completed' | 'cancelled' | 'no-show'
+    status: 'scheduled' | 'in-progress' | 'completed' | 'cancelled' | 'no-show' | 'pending'
     member_name: string
     member_avatar?: string
     // Augmented intelligence fields

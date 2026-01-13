@@ -17,7 +17,7 @@ const isLoadingSchedules = ref(true)
 const statusPriority: Record<string, number> = {
   'in-progress': 0,
   'scheduled': 1,
-  'pending_confirmation': 2,
+  'pending': 2,
   'completed': 3,
   'cancelled': 4,
   'no-show': 5
@@ -252,7 +252,9 @@ const mockRecentPRs = [
                 ? 'border-l-green-500 bg-green-50/50 dark:bg-green-900/10' 
                 : session.status === 'in-progress'
                   ? 'border-l-blue-500 bg-blue-50/50 dark:bg-blue-900/10'
-                  : 'border-l-primary-500'
+                  : session.status === 'pending'
+                    ? 'border-l-amber-500 bg-amber-50/50 dark:bg-amber-900/10'
+                    : 'border-l-primary-500'
             ]"
           >
             <template #header>
@@ -264,7 +266,9 @@ const mockRecentPRs = [
                       ? 'text-green-600 dark:text-green-400' 
                       : session.status === 'in-progress'
                         ? 'text-blue-600 dark:text-blue-400'
-                        : 'text-primary-600 dark:text-primary-400'
+                        : session.status === 'pending'
+                          ? 'text-amber-600 dark:text-amber-400'
+                          : 'text-primary-600 dark:text-primary-400'
                   ]">{{ session.time }}</p>
                   <p class="font-medium text-lg mt-1">{{ session.clientName }}</p>
                 </div>
@@ -273,11 +277,14 @@ const mockRecentPRs = [
                     ? 'i-heroicons-check-circle-solid' 
                     : session.status === 'in-progress'
                       ? 'i-heroicons-play-circle-solid'
-                      : 'i-heroicons-calendar'" 
+                      : session.status === 'pending'
+                        ? 'i-heroicons-clock'
+                        : 'i-heroicons-calendar'" 
                   :class="[
                     'w-6 h-6',
                     session.status === 'completed' ? 'text-green-500' : 
-                    session.status === 'in-progress' ? 'text-blue-500' : 'text-gray-400'
+                    session.status === 'in-progress' ? 'text-blue-500' :
+                    session.status === 'pending' ? 'text-amber-500' : 'text-gray-400'
                   ]" 
                 />
               </div>
@@ -298,6 +305,13 @@ const mockRecentPRs = [
                   variant="subtle" 
                   size="xs"
                   label="In Progress"
+                />
+                <UBadge 
+                  v-else-if="session.status === 'pending'" 
+                  color="warning" 
+                  variant="subtle" 
+                  size="xs"
+                  label="Pending"
                 />
               </div>
               <UIcon 
