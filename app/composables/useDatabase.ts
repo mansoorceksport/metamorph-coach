@@ -1354,6 +1354,7 @@ export function useDatabase() {
         isSyncing.value = true
         let success = 0
         let failed = 0
+        let tokenRefreshed = false  // Track if we've already refreshed this cycle
 
         try {
             const items = await getPendingSyncItems()
@@ -1362,8 +1363,14 @@ export function useDatabase() {
             // Get auth token from cookie
             const metamorphToken = useCookie<string | null>('metamorph-token')
             if (!metamorphToken.value) {
-                console.warn('[SyncQueue] No auth token available, skipping sync')
-                return { success: 0, failed: 0 }
+                console.warn('[SyncQueue] No auth token available, attempting refresh...')
+                // Try to refresh token before giving up
+                const refreshed = await attemptTokenRefresh(metamorphToken)
+                if (!refreshed) {
+                    console.warn('[SyncQueue] Token refresh failed, skipping sync')
+                    return { success: 0, failed: 0 }
+                }
+                tokenRefreshed = true
             }
 
             for (const item of items) {
@@ -1376,11 +1383,36 @@ export function useDatabase() {
                         ...(item.headers || {})
                     }
 
-                    const response = await fetch(item.url, {
+                    let response = await fetch(item.url, {
                         method: item.method,
                         headers,
                         body: item.body
                     })
+
+                    // Handle 401 - Token expired, try to refresh and retry ONCE
+                    if (response.status === 401 && !tokenRefreshed) {
+                        console.log('[SyncQueue] Got 401, attempting token refresh...')
+                        const refreshed = await attemptTokenRefresh(metamorphToken)
+
+                        if (refreshed) {
+                            tokenRefreshed = true
+                            console.log('[SyncQueue] Token refreshed, retrying request...')
+
+                            // Retry with new token
+                            headers['Authorization'] = `Bearer ${metamorphToken.value}`
+                            response = await fetch(item.url, {
+                                method: item.method,
+                                headers,
+                                body: item.body
+                            })
+                        } else {
+                            // Refresh failed - user needs to re-login
+                            console.error('[SyncQueue] Token refresh failed, user needs to re-login')
+                            await markSyncFailed(item.id, 'Auth token expired, please login again')
+                            failed++
+                            continue
+                        }
+                    }
 
                     if (response.ok) {
                         // Handle schedule creation - populate remote_id (Dual-Identity)
@@ -1474,6 +1506,12 @@ export function useDatabase() {
                         await removeSyncItem(item.id)
                         success++
                         console.log(`[SyncQueue] Idempotent DELETE (404 = OK): ${item.url}`)
+                    } else if (response.status === 401) {
+                        // 401 after token refresh attempt - user must re-login
+                        const errorText = await response.text()
+                        await markSyncFailed(item.id, `Auth expired: ${errorText}`)
+                        failed++
+                        console.error(`[SyncQueue] Auth failed after refresh: ${item.url}`)
                     } else {
                         const errorText = await response.text()
                         await markSyncFailed(item.id, `HTTP ${response.status}: ${errorText}`)
@@ -1490,6 +1528,38 @@ export function useDatabase() {
         }
 
         return { success, failed }
+    }
+
+    /**
+     * Attempt to refresh the access token using refresh token cookie
+     * Returns true if refresh succeeded, false otherwise
+     */
+    async function attemptTokenRefresh(tokenRef: Ref<string | null>): Promise<boolean> {
+        try {
+            console.log('[SyncQueue] Calling /api/v1/auth/refresh...')
+            const response = await fetch('/api/v1/auth/refresh', {
+                method: 'POST',
+                credentials: 'include',  // Include httpOnly refresh token cookie
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            })
+
+            if (response.ok) {
+                const data = await response.json()
+                if (data.token) {
+                    tokenRef.value = data.token
+                    console.log('[SyncQueue] Token refresh successful!')
+                    return true
+                }
+            }
+
+            console.error('[SyncQueue] Token refresh failed:', response.status)
+            return false
+        } catch (error) {
+            console.error('[SyncQueue] Token refresh error:', error)
+            return false
+        }
     }
 
     /**
