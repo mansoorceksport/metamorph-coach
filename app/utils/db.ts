@@ -172,6 +172,18 @@ export class MetamorphDB extends Dexie {
 // Singleton instance
 export const db = new MetamorphDB()
 
+// Handle database close events (iOS can unexpectedly close connections)
+if (typeof window !== 'undefined') {
+    db.on('close', () => {
+        console.warn('[Database] IndexedDB connection closed unexpectedly!')
+        // Attempt to reopen the database
+        db.open().catch((err) => {
+            console.error('[Database] Failed to reopen database:', err)
+            // The error handler plugin will catch this and prompt for reload
+        })
+    })
+}
+
 // ============================================
 // HELPER TYPES
 // ============================================
