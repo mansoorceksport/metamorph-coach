@@ -154,6 +154,17 @@ export const useAuth = () => {
                 username: result.user.displayName || undefined
             })
 
+            // Log successful login as breadcrumb
+            Sentry.addBreadcrumb({
+                category: 'auth',
+                message: 'User logged in successfully',
+                level: 'info',
+                data: {
+                    provider: 'google',
+                    user_id: result.user.uid
+                }
+            })
+
             // Await user data sync to ensure data is ready when user reaches dashboard
             await syncUserData()
 
