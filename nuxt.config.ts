@@ -39,7 +39,15 @@ export default defineNuxtConfig({
   css: ['~/assets/css/main.css'],
 
   routeRules: {
+    // Pre-render static pages at build time (instant TTFB)
     '/': { prerender: true },
+    '/login': { prerender: true },
+
+    // SWR caching for authenticated pages (stale-while-revalidate)
+    // Serve cached version immediately, revalidate in background
+    '/clients/**': { swr: 3600 },      // Cache 1 hour
+    '/library': { swr: 86400 },         // Cache 24 hours (exercises rarely change)
+
     // Proxy API requests to backend - Nitro automatically forwards cookies
     '/api/v1/**': { proxy: `${process.env.NUXT_PUBLIC_API_BASE || 'http://localhost:8080'}/v1/**` }
   },
