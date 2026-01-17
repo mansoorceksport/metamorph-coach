@@ -93,8 +93,8 @@ export interface CachedMember {
     avatar?: string
     email?: string
     phone?: string
-    // Contract info for scheduling
-    active_contract_id: string  // For schedule creation (auto-resolved by backend if not provided)
+    // Contract info for scheduling (optional - not provided by simple endpoint)
+    active_contract_id?: string  // For schedule creation (auto-resolved by backend if not provided)
     remaining_sessions: number  // Show in UI for package health
     // Analytics
     churn_score: number

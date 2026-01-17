@@ -42,7 +42,7 @@ watch(searchQuery, () => {
   displayCount.value = 10
 })
 
-// Sync members from API on mount
+// Sync members from API - called only on explicit Refresh button click
 async function refreshMembers() {
   isSyncing.value = true
   try {
@@ -55,6 +55,11 @@ async function refreshMembers() {
       })
     } else if (result.synced > 0) {
       console.log(`[Members] Synced ${result.synced} members from API`)
+      toast.add({
+        title: 'Synced',
+        description: `${result.synced} members updated`,
+        color: 'success'
+      })
     }
   } catch (error: any) {
     toast.add({
@@ -72,9 +77,9 @@ async function handleMemberCreated() {
   await refreshMembers()
 }
 
+// Show cached data immediately - no API call on mount
+// User can click Refresh to sync latest data from backend
 onMounted(() => {
-  refreshMembers()
-
   // Infinite scroll observer
   const observer = new IntersectionObserver(
     (entries) => {

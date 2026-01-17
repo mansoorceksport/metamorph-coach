@@ -950,13 +950,14 @@ export function useDatabase() {
         try {
             // Lazy import to avoid circular dependency
             const api = useApi()
-            const clients = await api.fetchClients()
+            // Use lightweight endpoint for faster sync
+            const clients = await api.fetchClientsSimple()
 
             // Convert to cached members and bulk upsert
             const members = clients.map(api.clientToCachedMember)
             await db.cachedMembers.bulkPut(members)
 
-            console.log(`[Database] Synced ${members.length} clients from API`)
+            console.log(`[Database] Synced ${members.length} clients from API (simple)`)
             return { synced: members.length }
         } catch (error: any) {
             console.error('[Database] Failed to sync clients:', error)

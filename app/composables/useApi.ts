@@ -19,6 +19,14 @@ export interface ClientResponse {
     total_sessions: number
 }
 
+// Lightweight response for /members list - only essential fields
+export interface SimpleClientResponse {
+    id: string
+    name: string
+    remaining_sessions: number
+    total_sessions: number
+}
+
 export interface ScheduleResponse {
     id: string
     client_id?: string  // Frontend ULID for dual-identity
@@ -138,6 +146,13 @@ export function useApi() {
         return await apiFetch<ClientResponse[]>('/v1/pro/clients')
     }
 
+    /**
+     * Fetch clients with minimal data - lightweight for /members list
+     */
+    async function fetchClientsSimple(): Promise<SimpleClientResponse[]> {
+        return await apiFetch<SimpleClientResponse[]>('/v1/pro/clients/simple')
+    }
+
     // ============================================
     // SCHEDULE ENDPOINTS
     // ============================================
@@ -184,18 +199,19 @@ export function useApi() {
 
     /**
      * Convert API client response to CachedMember for local storage
+     * Works with both full and simple client responses
      */
-    function clientToCachedMember(client: ClientResponse): CachedMember {
+    function clientToCachedMember(client: ClientResponse | SimpleClientResponse): CachedMember {
         return {
             id: client.id,
             name: client.name,
-            email: client.email,
-            avatar: client.avatar,
-            active_contract_id: client.active_contract_id,
+            email: 'email' in client ? client.email : undefined,
+            avatar: 'avatar' in client ? client.avatar : undefined,
+            active_contract_id: 'active_contract_id' in client ? client.active_contract_id : undefined,
             remaining_sessions: client.remaining_sessions,
-            churn_score: client.churn_score,
-            attendance_trend: client.attendance_trend,
-            last_session_date: client.last_session_date,
+            churn_score: 'churn_score' in client ? client.churn_score : 50,
+            attendance_trend: 'attendance_trend' in client ? client.attendance_trend : 'stable',
+            last_session_date: 'last_session_date' in client ? client.last_session_date : undefined,
             total_sessions: client.total_sessions,
             cached_at: Date.now()
         }
@@ -261,6 +277,7 @@ export function useApi() {
         // Raw API calls
         apiFetch,
         fetchClients,
+        fetchClientsSimple,
         fetchSchedules,
         fetchSets,
         fetchExercises,
