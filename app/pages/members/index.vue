@@ -5,8 +5,39 @@ const toast = useToast()
 const showAddModal = ref(false)
 const isSyncing = ref(false)
 
+// Search & Pagination
+const searchQuery = ref('')
+const displayCount = ref(10)
+
 // Reactive query - updates automatically when IndexedDB changes
 const { members, loading } = getMembers()
+
+// Filter by search, then paginate
+const filteredMembers = computed(() => {
+  let result = members.value
+  if (searchQuery.value.trim()) {
+    const query = searchQuery.value.toLowerCase()
+    result = result.filter(m => m.name?.toLowerCase().includes(query))
+  }
+  return result.slice(0, displayCount.value)
+})
+
+// Check if there are more members to load
+const hasMore = computed(() => {
+  const totalFiltered = searchQuery.value.trim()
+    ? members.value.filter(m => m.name?.toLowerCase().includes(searchQuery.value.toLowerCase())).length
+    : members.value.length
+  return displayCount.value < totalFiltered
+})
+
+function loadMore() {
+  displayCount.value += 10
+}
+
+// Reset pagination when search changes
+watch(searchQuery, () => {
+  displayCount.value = 10
+})
 
 // Sync members from API on mount
 async function refreshMembers() {
@@ -78,6 +109,17 @@ onMounted(() => {
       </div>
     </div>
 
+    <!-- Search Input -->
+    <div class="mb-2">
+      <UInput
+        v-model="searchQuery"
+        placeholder="Search members by name..."
+        icon="i-heroicons-magnifying-glass"
+        size="lg"
+        class="w-full"
+      />
+    </div>
+
     <!-- Loading State -->
     <div v-if="loading && members.length === 0" class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
       <UCard v-for="n in 3" :key="n" class="animate-pulse">
@@ -106,9 +148,17 @@ onMounted(() => {
       />
     </div>
 
+    <!-- No Search Results -->
+    <div v-else-if="searchQuery && filteredMembers.length === 0" class="text-center py-12">
+      <UIcon name="i-heroicons-magnifying-glass" class="w-16 h-16 mx-auto text-gray-300 mb-4" />
+      <h3 class="text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">No members found</h3>
+      <p class="text-gray-500">No members match "{{ searchQuery }}"</p>
+    </div>
+
     <!-- Member Cards -->
-    <div v-else class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-      <UCard v-for="member in members" :key="member.id">
+    <div v-else class="space-y-4">
+      <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+        <UCard v-for="member in filteredMembers" :key="member.id">
         <template #header>
           <div class="flex items-center gap-3">
             <div class="w-10 h-10 rounded-full bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center">
@@ -158,8 +208,20 @@ onMounted(() => {
             block
             icon="i-heroicons-arrow-right"
           />
-        </template>
-      </UCard>
+          </template>
+        </UCard>
+      </div>
+
+      <!-- Load More Button -->
+      <div v-if="hasMore" class="flex justify-center pt-4">
+        <UButton
+          label="Load More"
+          color="neutral"
+          variant="outline"
+          icon="i-heroicons-arrow-down"
+          @click="loadMore"
+        />
+      </div>
     </div>
 
     <!-- Add Member Modal -->
