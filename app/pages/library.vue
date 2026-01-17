@@ -8,6 +8,10 @@ const { exercises, loading, initLibrary, forceSync } = useExerciseLibrary()
 const searchQuery = ref('')
 const selectedMuscleGroup = ref('all')
 
+// Pagination
+const displayCount = ref(10)
+const loadMoreRef = ref<HTMLElement | null>(null)
+
 // Filter options - use 'all' instead of empty string (USelect requires non-empty values)
 const muscleGroupOptions = [
     { label: 'All Muscle Groups', value: 'all' },
@@ -20,7 +24,7 @@ const muscleGroupOptions = [
     { label: 'Full Body', value: 'Full Body' }
 ]
 
-// Filtered exercises
+// Filtered exercises (with pagination)
 const filteredExercises = computed(() => {
     let result = exercises.value
 
@@ -38,7 +42,57 @@ const filteredExercises = computed(() => {
         result = result.filter(ex => ex.muscle_group === selectedMuscleGroup.value)
     }
 
-    return result
+    return result.slice(0, displayCount.value)
+})
+
+// Total count for "showing X of Y" display
+const totalFilteredCount = computed(() => {
+    let result = exercises.value
+    if (searchQuery.value) {
+        const query = searchQuery.value.toLowerCase()
+        result = result.filter(ex =>
+            ex.name.toLowerCase().includes(query) ||
+            ex.equipment.toLowerCase().includes(query)
+        )
+    }
+    if (selectedMuscleGroup.value && selectedMuscleGroup.value !== 'all') {
+        result = result.filter(ex => ex.muscle_group === selectedMuscleGroup.value)
+    }
+    return result.length
+})
+
+// Check if there are more exercises to load
+const hasMore = computed(() => displayCount.value < totalFilteredCount.value)
+
+// Load more exercises
+function loadMore() {
+    displayCount.value += 10
+}
+
+// Reset pagination when filters change
+watch([searchQuery, selectedMuscleGroup], () => {
+    displayCount.value = 10
+})
+
+// Infinite scroll observer
+onMounted(() => {
+    const observer = new IntersectionObserver(
+        (entries) => {
+            if (entries[0]?.isIntersecting && hasMore.value && !loading.value) {
+                loadMore()
+            }
+        },
+        { threshold: 0.1 }
+    )
+
+    // Watch for the sentinel element
+    watchEffect(() => {
+        if (loadMoreRef.value) {
+            observer.observe(loadMoreRef.value)
+        }
+    })
+
+    onUnmounted(() => observer.disconnect())
 })
 
 // Modal state
@@ -245,8 +299,7 @@ function getMuscleColor(group: string): string {
 
     <!-- Results count -->
     <div v-if="!loading" class="text-sm text-gray-500">
-      {{ filteredExercises.length }} exercise{{ filteredExercises.length !== 1 ? 's' : '' }}
-      <span v-if="searchQuery || selectedMuscleGroup !== 'all'">found</span>
+      Showing {{ filteredExercises.length }} of {{ totalFilteredCount }} exercise{{ totalFilteredCount !== 1 ? 's' : '' }}
     </div>
 
     <!-- Loading State -->
@@ -357,6 +410,15 @@ function getMuscleColor(group: string): string {
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- Infinite Scroll Sentinel -->
+    <div
+      v-if="hasMore"
+      ref="loadMoreRef"
+      class="flex justify-center py-8"
+    >
+      <UIcon name="i-lucide-loader-2" class="w-6 h-6 animate-spin text-gray-400" />
     </div>
 
     <!-- Add/Edit Exercise Modal -->

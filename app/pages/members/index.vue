@@ -8,6 +8,7 @@ const isSyncing = ref(false)
 // Search & Pagination
 const searchQuery = ref('')
 const displayCount = ref(10)
+const loadMoreRef = ref<HTMLElement | null>(null)
 
 // Reactive query - updates automatically when IndexedDB changes
 const { members, loading } = getMembers()
@@ -23,12 +24,14 @@ const filteredMembers = computed(() => {
 })
 
 // Check if there are more members to load
-const hasMore = computed(() => {
-  const totalFiltered = searchQuery.value.trim()
-    ? members.value.filter(m => m.name?.toLowerCase().includes(searchQuery.value.toLowerCase())).length
-    : members.value.length
-  return displayCount.value < totalFiltered
+const totalMemberCount = computed(() => {
+  if (searchQuery.value.trim()) {
+    return members.value.filter(m => m.name?.toLowerCase().includes(searchQuery.value.toLowerCase())).length
+  }
+  return members.value.length
 })
+
+const hasMore = computed(() => displayCount.value < totalMemberCount.value)
 
 function loadMore() {
   displayCount.value += 10
@@ -71,6 +74,24 @@ async function handleMemberCreated() {
 
 onMounted(() => {
   refreshMembers()
+
+  // Infinite scroll observer
+  const observer = new IntersectionObserver(
+    (entries) => {
+      if (entries[0]?.isIntersecting && hasMore.value && !loading.value) {
+        loadMore()
+      }
+    },
+    { threshold: 0.1 }
+  )
+
+  watchEffect(() => {
+    if (loadMoreRef.value) {
+      observer.observe(loadMoreRef.value)
+    }
+  })
+
+  onUnmounted(() => observer.disconnect())
 })
 </script>
 
@@ -212,15 +233,13 @@ onMounted(() => {
         </UCard>
       </div>
 
-      <!-- Load More Button -->
-      <div v-if="hasMore" class="flex justify-center pt-4">
-        <UButton
-          label="Load More"
-          color="neutral"
-          variant="outline"
-          icon="i-heroicons-arrow-down"
-          @click="loadMore"
-        />
+      <!-- Infinite Scroll Sentinel -->
+      <div
+        v-if="hasMore"
+        ref="loadMoreRef"
+        class="flex justify-center py-8"
+      >
+        <UIcon name="i-heroicons-arrow-path" class="w-6 h-6 animate-spin text-gray-400" />
       </div>
     </div>
 
