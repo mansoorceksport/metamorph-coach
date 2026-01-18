@@ -39,10 +39,13 @@ onMounted(async () => {
     return await db.schedules.toArray()
   }).subscribe({
     next: (allSchedules) => {
-      // Filter to only today's schedules
+      // Filter to only today's schedules (excluding cancelled/no-show)
       const todaysSchedules = allSchedules.filter(schedule => {
         const scheduleDate = new Date(schedule.start_time)
-        return scheduleDate >= startOfToday && scheduleDate < endOfToday
+        const isToday = scheduleDate >= startOfToday && scheduleDate < endOfToday
+        const status = schedule.status?.toLowerCase()
+        const isActive = status !== 'cancelled' && status !== 'no-show'
+        return isToday && isActive
       })
       
       // Sort by status priority (in-progress > scheduled > completed)

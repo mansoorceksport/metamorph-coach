@@ -470,6 +470,33 @@ async function startSession() {
   }
 }
 
+// Cancel the session - update status to 'cancelled'
+async function cancelSession() {
+  const { updateScheduleStatusWithSync } = useDatabase()
+  const toast = useToast()
+  const router = useRouter()
+  
+  try {
+    await updateScheduleStatusWithSync(sessionId.value, 'cancelled')
+    session.value.status = 'cancelled'
+    toast.add({
+      title: 'Session Cancelled',
+      description: 'This session has been cancelled.',
+      color: 'warning',
+      icon: 'i-heroicons-x-circle'
+    })
+    console.log('[Session] Status updated to cancelled (synced)')
+    // Navigate back to home after cancellation
+    router.push('/')
+  } catch (error) {
+    console.error('[Session] Failed to cancel session:', error)
+    toast.add({
+      title: 'Failed to cancel session',
+      color: 'error'
+    })
+  }
+}
+
 // Add a set to an exercise (with backend sync)
 async function addSet(exerciseId: string) {
   // Get next set index
@@ -1245,6 +1272,16 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
               icon="i-heroicons-play-circle"
               block
               @click="startSession"
+            />
+            <UButton
+              label="Cancel Session"
+              color="error"
+              size="xl"
+              icon="i-heroicons-x-circle"
+              variant="soft"
+              block
+              class="mt-2"
+              @click="cancelSession"
             />
           </div>
         </div>

@@ -11,7 +11,7 @@ const router = useRouter()
 watchEffect(() => {
   if (isAuthenticated.value) {
     console.log("am i running?")
-    router.push('/')
+    router.push('/hydrating')
   }
 })
 
@@ -26,7 +26,7 @@ const handleGoogleSignIn = async () => {
     })
     
     // Explicit redirect to ensure navigation occurs
-    await router.push('/')
+    await router.push('/hydrating')
   } catch (err: any) {
     toast.add({
       title: 'Sign In Failed',

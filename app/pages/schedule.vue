@@ -23,6 +23,11 @@ const statusOptions = [
   { label: 'No Show', value: 'no-show' }
 ]
 
+// Pagination - Lazy Loading
+const PAGE_SIZE = 20
+const displayCount = ref(PAGE_SIZE)
+const isLoadingMore = ref(false)
+
 // New Schedule Modal
 const showNewScheduleModal = ref(false)
 const members = ref<CachedMember[]>([])
@@ -226,7 +231,7 @@ function getStatusPriority(status: string): number {
   return statusPriority[status] ?? 99
 }
 
-// Filtered schedules
+// Filtered schedules (full list for counting)
 const filteredSchedules = computed(() => {
   let result = [...schedules.value]
   
@@ -255,6 +260,32 @@ const filteredSchedules = computed(() => {
   })
   
   return result
+})
+
+// Displayed schedules (paginated for lazy loading)
+const displayedSchedules = computed(() => {
+  return filteredSchedules.value.slice(0, displayCount.value)
+})
+
+// Check if there are more items to load
+const hasMore = computed(() => displayCount.value < filteredSchedules.value.length)
+
+// Load more items
+async function loadMore() {
+  if (!hasMore.value || isLoadingMore.value) return
+  
+  isLoadingMore.value = true
+  
+  // Small delay to show loading state
+  await new Promise(resolve => setTimeout(resolve, 200))
+  
+  displayCount.value += PAGE_SIZE
+  isLoadingMore.value = false
+}
+
+// Reset pagination when filters change
+watch([selectedDate, selectedStatus], () => {
+  displayCount.value = PAGE_SIZE
 })
 
 // Format date for display
@@ -389,7 +420,7 @@ function clearFilters() {
     <!-- Schedule List -->
     <div v-else class="space-y-3">
       <NuxtLink 
-        v-for="schedule in filteredSchedules" 
+        v-for="schedule in displayedSchedules" 
         :key="schedule.id"
         :to="`/sessions/${schedule.id}`"
         class="block"
@@ -466,6 +497,23 @@ function clearFilters() {
           </div>
         </UCard>
       </NuxtLink>
+      
+      <!-- Load More Button -->
+      <div v-if="hasMore" class="flex justify-center pt-4">
+        <UButton
+          :loading="isLoadingMore"
+          label="Load More"
+          color="neutral"
+          variant="soft"
+          icon="i-heroicons-arrow-down"
+          @click="loadMore"
+        />
+      </div>
+      
+      <!-- End of List -->
+      <p v-else-if="displayedSchedules.length > PAGE_SIZE" class="text-center text-sm text-gray-400 py-4">
+        All {{ filteredSchedules.length }} sessions loaded
+      </p>
     </div>
 
     <!-- New Schedule Modal -->

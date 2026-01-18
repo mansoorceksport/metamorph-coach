@@ -3,12 +3,19 @@ const route = useRoute()
 const memberId = computed(() => route.params.id as string)
 const toast = useToast()
 
+interface ScheduleStats {
+  completed: number
+  cancelled: number
+  no_show: number
+}
+
 interface MemberDetails {
   id: string
   name: string
   email: string
   remaining_sessions: number
   contracts: any[]
+  schedule_stats?: ScheduleStats
 }
 
 // Member data
@@ -79,6 +86,15 @@ function handleContractCreated() {
   // Reload member to get updated contract info
   loadMember()
 }
+
+// Computed attendance rate
+const attendanceRate = computed(() => {
+  if (!member.value?.schedule_stats) return 0
+  const stats = member.value.schedule_stats
+  const total = stats.completed + stats.cancelled + stats.no_show
+  if (total === 0) return 0
+  return Math.round((stats.completed / total) * 100)
+})
 
 onMounted(() => {
   loadMember()
@@ -182,6 +198,40 @@ onMounted(() => {
           <div class="text-center p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
             <p class="text-2xl font-bold text-blue-600">{{ member?.contracts?.length || 0 }}</p>
             <p class="text-sm text-gray-500">Packages</p>
+          </div>
+        </div>
+
+        <!-- Attendance Stats -->
+        <div v-if="member?.schedule_stats" class="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
+          <p class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Attendance History</p>
+          <div class="grid grid-cols-3 gap-3">
+            <div class="text-center p-3 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg">
+              <p class="text-xl font-bold text-emerald-600">{{ member.schedule_stats.completed }}</p>
+              <p class="text-xs text-gray-500">Completed</p>
+            </div>
+            <div class="text-center p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg">
+              <p class="text-xl font-bold text-amber-600">{{ member.schedule_stats.cancelled }}</p>
+              <p class="text-xs text-gray-500">Cancelled</p>
+            </div>
+            <div class="text-center p-3 bg-red-50 dark:bg-red-900/20 rounded-lg">
+              <p class="text-xl font-bold text-red-600">{{ member.schedule_stats.no_show }}</p>
+              <p class="text-xs text-gray-500">No Show</p>
+            </div>
+          </div>
+          <div v-if="(member.schedule_stats.completed + member.schedule_stats.cancelled + member.schedule_stats.no_show) > 0" class="mt-3">
+            <div class="flex items-center justify-between text-sm mb-1">
+              <span class="text-gray-600 dark:text-gray-400">Attendance Rate</span>
+              <span class="font-semibold" :class="attendanceRate >= 80 ? 'text-emerald-600' : attendanceRate >= 50 ? 'text-amber-600' : 'text-red-600'">
+                {{ attendanceRate }}%
+              </span>
+            </div>
+            <div class="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+              <div 
+                class="h-full rounded-full transition-all"
+                :class="attendanceRate >= 80 ? 'bg-emerald-500' : attendanceRate >= 50 ? 'bg-amber-500' : 'bg-red-500'"
+                :style="{ width: `${attendanceRate}%` }"
+              />
+            </div>
           </div>
         </div>
       </UCard>
