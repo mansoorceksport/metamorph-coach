@@ -6,7 +6,8 @@ export default defineNuxtConfig({
     '@nuxt/hints',
     '@nuxt/image',
     '@nuxt/test-utils',
-    '@sentry/nuxt/module'
+    '@sentry/nuxt/module',
+    '@pinia/nuxt'
   ],
 
   runtimeConfig: {

@@ -163,6 +163,66 @@ export function useExerciseLibrary() {
         await fetchAndCacheExercises()
     }
 
+    /**
+     * Create a custom exercise (local-first with sync)
+     * This saves to IndexedDB immediately and queues a sync job
+     */
+    async function createCustomExercise(exercise: {
+        name: string
+        muscle_group: string
+        equipment: string
+        video_url?: string
+    }): Promise<string> {
+        if (!import.meta.client) throw new Error('Client-side only')
+
+        const { generateId } = await import('~/utils/crypto')
+        const { queueSync } = useDatabase()
+
+        // Generate local ID
+        const id = generateId()
+
+        // Create local exercise record
+        const newExercise: Exercise = {
+            id,
+            name: exercise.name,
+            muscle_group: exercise.muscle_group,
+            equipment: exercise.equipment,
+            video_url: exercise.video_url,
+            personal_best_weight: 0,
+            last_3_weights_history: []
+        }
+
+        // Save to IndexedDB
+        await db.exercises.add(newExercise)
+
+        // Update reactive state
+        exerciseLibrary.value = [...exerciseLibrary.value, newExercise]
+
+        // Queue sync to backend
+        const config = useRuntimeConfig()
+        const baseUrl = config.public.apiBase || ''
+
+        await queueSync({
+            method: 'POST',
+            url: `${baseUrl}/v1/exercises`,
+            body: JSON.stringify({
+                client_id: id,
+                name: exercise.name,
+                muscle_group: exercise.muscle_group,
+                equipment: exercise.equipment,
+                video_url: exercise.video_url || ''
+            }),
+            priority: 'normal',
+            context: {
+                type: 'exercise_create',
+                temp_id: id
+            }
+        })
+
+        console.log(`[ExerciseLibrary] Created custom exercise: ${exercise.name} (${id})`)
+        return id
+    }
+
     return {
         // State (with aliases for convenience)
         exercises: exerciseLibrary,
@@ -179,6 +239,7 @@ export function useExerciseLibrary() {
         searchExercises,
         muscleGroups,
         initLibrary,
-        forceSync
+        forceSync,
+        createCustomExercise
     }
 }

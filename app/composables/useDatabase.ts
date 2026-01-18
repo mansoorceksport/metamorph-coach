@@ -1502,11 +1502,11 @@ export function useDatabase() {
                         await removeSyncItem(item.id)
                         success++
                         console.log(`[SyncQueue] Already synced (409): ${item.url}`)
-                    } else if (item.method === 'DELETE' && response.status === 404) {
-                        // DELETE + 404 = Already deleted = Success (idempotent)
+                    } else if ((item.method === 'DELETE' || item.method === 'PUT') && response.status === 404) {
+                        // DELETE/PUT + 404 = Target doesn't exist = Operation is irrelevant/done
                         await removeSyncItem(item.id)
                         success++
-                        console.log(`[SyncQueue] Idempotent DELETE (404 = OK): ${item.url}`)
+                        console.log(`[SyncQueue] Target missing (404) - Dropping operation: ${item.method} ${item.url}`)
                     } else if (response.status === 401) {
                         // 401 after token refresh attempt - user must re-login
                         const errorText = await response.text()

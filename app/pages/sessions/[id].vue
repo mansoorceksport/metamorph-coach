@@ -20,6 +20,10 @@ const {
   syncPlannedExercises
 } = useDatabase()
 
+// Focus Mode Store
+const focusStore = useFocusStore()
+const { createCustomExercise } = useExerciseLibrary()
+
 // Session Data (loaded from database)
 const session = ref({
   id: sessionId.value,
@@ -795,6 +799,156 @@ async function completeFinalFinish() {
   navigateTo('/')
 }
 
+// ==============================================
+// FOCUS MODE HANDLERS
+// ==============================================
+
+// Handle set updates from FocusCanvas (with Smart Auto-Carry / Ripple)
+function handleFocusUpdateSet(payload: { exerciseId: string; setIndex: number; field: 'weight' | 'reps'; value: number }) {
+  const logs = setLogs.value[payload.exerciseId]
+  if (!logs) return
+  
+  const currentSet = logs[payload.setIndex]
+  if (!currentSet) return
+
+  // 1. Update the current set
+  currentSet[payload.field] = payload.value
+  debouncedPersist(payload.exerciseId, payload.setIndex)
+
+  // 2. Ripple: Propagate to subsequent incomplete sets
+  for (let i = payload.setIndex + 1; i < logs.length; i++) {
+    const nextSet = logs[i]
+    if (!nextSet) break
+    
+    // Stop rippling if we hit a completed set
+    if (nextSet.completed) break
+    
+    // Update the field on the incomplete set
+    nextSet[payload.field] = payload.value
+    debouncedPersist(payload.exerciseId, i)
+  }
+}
+
+// Handle toggle complete from FocusCanvas
+function handleFocusToggleComplete(payload: { exerciseId: string; setIndex: number }) {
+  toggleSetComplete(payload.exerciseId, payload.setIndex)
+}
+
+// Handle remove set from FocusCanvas
+function handleFocusRemoveSet(payload: { exerciseId: string; setIndex: number }) {
+  removeSet(payload.exerciseId, payload.setIndex)
+}
+
+// Handle exercise selection from picker modal (swap or add)
+async function handleExercisePickerSelect(payload: { exerciseId: string; name: string; muscleGroup: string; equipment: string }) {
+  if (focusStore.isSwapping && focusStore.activeExerciseId) {
+    // SWAP: Update the existing planned exercise with new exercise details
+    const currentExercise = exercises.value.find(ex => ex.id === focusStore.activeExerciseId)
+    if (currentExercise) {
+      // Update local state
+      currentExercise.exerciseId = payload.exerciseId
+      currentExercise.name = payload.name
+      
+      // Sync to backend
+      const { updatePlannedExerciseWithSync } = useDatabase()
+      await updatePlannedExerciseWithSync(focusStore.activeExerciseId, {
+        exercise_id: payload.exerciseId,
+        name: payload.name
+      })
+      
+      const toast = useToast()
+      toast.add({
+        title: 'Exercise Replaced',
+        description: `Swapped to ${payload.name}`,
+        icon: 'i-heroicons-arrows-right-left',
+        color: 'success'
+      })
+    }
+  } else if (focusStore.isAdding) {
+    // ADD: Add the selected exercise to the session
+    await addExerciseToSession(payload.exerciseId, payload.name)
+  }
+  
+  focusStore.closeModals()
+}
+
+// Handle creating new exercise from picker modal
+async function handleExercisePickerCreateNew(payload: { name: string; muscleGroup: string; equipment: string }) {
+  // Create the custom exercise in the library
+  const newExerciseId = await createCustomExercise({
+    name: payload.name,
+    muscle_group: payload.muscleGroup,
+    equipment: payload.equipment
+  })
+  
+  if (focusStore.isSwapping && focusStore.activeExerciseId) {
+    // SWAP with newly created exercise
+    const currentExercise = exercises.value.find(ex => ex.id === focusStore.activeExerciseId)
+    if (currentExercise) {
+      currentExercise.exerciseId = newExerciseId
+      currentExercise.name = payload.name
+      
+      const { updatePlannedExerciseWithSync } = useDatabase()
+      await updatePlannedExerciseWithSync(focusStore.activeExerciseId, {
+        exercise_id: newExerciseId,
+        name: payload.name
+      })
+      
+      const toast = useToast()
+      toast.add({
+        title: 'Exercise Created & Replaced',
+        description: `Swapped to ${payload.name}`,
+        icon: 'i-heroicons-plus-circle',
+        color: 'success'
+      })
+    }
+  } else if (focusStore.isAdding) {
+    // ADD newly created exercise to session
+    await addExerciseToSession(newExerciseId, payload.name)
+  }
+  
+  focusStore.closeModals()
+}
+
+// Helper to add exercise to session (used by Focus Mode)
+async function addExerciseToSession(exerciseId: string, name: string) {
+  const newOrder = exercises.value.length + 1
+  
+  const schedule = await getSchedule(sessionId.value)
+  const targetScheduleId = schedule?.remote_id || sessionId.value
+  
+  const newPlannedExercise = await addPlannedExerciseWithSync({
+    schedule_id: targetScheduleId,
+    exercise_id: exerciseId,
+    name: name,
+    target_sets: 3,
+    target_reps: 10,
+    rest_seconds: 60,
+    notes: '',
+    order: newOrder
+  })
+  
+  // Create initial sets
+  for (let i = 1; i <= 3; i++) {
+    await addSetWithSync(newPlannedExercise, i)
+  }
+  
+  // Refresh data
+  await loadSessionData()
+  await initializeSetLogs()
+  
+  // Focus on the new exercise
+  focusStore.setActiveExercise(newPlannedExercise)
+  
+  const toast = useToast()
+  toast.add({
+    title: 'Exercise Added',
+    description: `Added ${name} to session`,
+    icon: 'i-heroicons-plus-circle',
+    color: 'success'
+  })
+}
+
 // Motivation messages
 const motivationMessages = [
   "🎉 Amazing workout! You crushed it today!",
@@ -808,6 +962,28 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
 
 <template>
   <div class="space-y-4 pb-8">
+    <!-- Focus Mode Canvas -->
+    <FocusCanvas
+      v-if="focusStore.isActive"
+      :schedule-id="sessionId"
+      :exercises="exercises"
+      :set-logs="setLogs"
+      @update-set="handleFocusUpdateSet"
+      @toggle-complete="handleFocusToggleComplete"
+      @add-set="addSet"
+      @remove-set="handleFocusRemoveSet"
+    />
+
+    <!-- Exercise Picker Modal (for Focus Mode swap/add) -->
+    <FocusExercisePickerModal
+      v-if="focusStore.isSwapping || focusStore.isAdding"
+      :mode="focusStore.isSwapping ? 'swap' : 'add'"
+      :current-exercise-id="focusStore.isSwapping ? focusStore.activeExerciseId ?? undefined : undefined"
+      @select="handleExercisePickerSelect"
+      @create-new="handleExercisePickerCreateNew"
+      @close="focusStore.closeModals()"
+    />
+
     <!-- Session Header -->
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
       <div class="flex items-center gap-3">
@@ -1077,6 +1253,18 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
 
     <!-- ACTIVE WORKOUT VIEW (Session is In Progress) -->
     <template v-else-if="isInProgress">
+
+    <!-- Focus Mode Toggle Button -->
+    <div class="flex justify-end mb-4">
+      <UButton
+        label="Mode Latihan"
+        icon="i-heroicons-tv"
+        color="primary"
+        variant="soft"
+        size="lg"
+        @click="() => { focusStore.setExercises(exercises.map(e => e.id)); focusStore.enterMode(exercises[0]?.id); }"
+      />
+    </div>
     
     <!-- Progress Bar (Moved to Top) -->
     <div class="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-gray-800 p-4">

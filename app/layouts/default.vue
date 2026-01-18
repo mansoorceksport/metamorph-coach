@@ -2,6 +2,7 @@
 const { signOut, checkPendingSync, forceSyncBeforeLogout } = useAuth()
 const toast = useToast()
 const { pendingSyncCount, isSyncing, isOnline, forceSyncNow } = useDatabase()
+const focusStore = useFocusStore()
 
 // Sidebar collapse state - persisted in localStorage
 const isSidebarCollapsed = ref(false)
@@ -184,8 +185,8 @@ const handleForceSync = async () => {
 
 <template>
   <div class="min-h-screen flex flex-col">
-    <!-- Global Header -->
-    <header class="border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950">
+    <!-- Global Header (hidden in Focus Mode) -->
+    <header v-if="!focusStore.isActive" class="border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950">
       <div class="flex items-center justify-between px-4 py-3">
         <div class="flex items-center gap-3">
           <div class="w-10 h-10 bg-slate-900 dark:bg-white rounded-full flex items-center justify-center shadow-lg">
@@ -239,8 +240,9 @@ const handleForceSync = async () => {
     </header>
 
     <div class="flex flex-1 overflow-hidden">
-      <!-- Desktop Sidebar Navigation -->
+      <!-- Desktop Sidebar Navigation (hidden in Focus Mode) -->
       <aside 
+        v-if="!focusStore.isActive"
         class="hidden lg:flex lg:flex-col border-r border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 transition-all duration-300 ease-in-out"
         :class="isSidebarCollapsed ? 'w-20' : 'w-64'"
       >
@@ -323,15 +325,15 @@ const handleForceSync = async () => {
       </aside>
 
       <!-- Main Content Area -->
-      <main class="flex-1 overflow-y-auto pb-20 lg:pb-0">
+      <main class="flex-1 overflow-y-auto" :class="focusStore.isActive ? 'pb-0' : 'pb-20 lg:pb-0'">
         <div class="container mx-auto p-4 lg:p-8">
           <slot />
         </div>
       </main>
     </div>
 
-    <!-- Mobile Bottom Navigation -->
-    <nav class="lg:hidden fixed bottom-0 left-0 right-0 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 safe-area-pb">
+    <!-- Mobile Bottom Navigation (hidden in Focus Mode) -->
+    <nav v-if="!focusStore.isActive" class="lg:hidden fixed bottom-0 left-0 right-0 border-t border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-950 safe-area-pb">
       <div class="flex items-stretch justify-around">
         <NuxtLink
           v-for="item in navItems"
