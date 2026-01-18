@@ -446,6 +446,17 @@ const isPreviewMode = computed(() => session.value.status === 'scheduled')
 // Check if session is currently in progress
 const isInProgress = computed(() => session.value.status === 'in-progress')
 
+// Edit mode for completed sessions (allows editing without changing status)
+const isEditMode = ref(false)
+
+function enableEditMode() {
+  isEditMode.value = true
+}
+
+function exitEditMode() {
+  isEditMode.value = false
+}
+
 // Start the session - update status to 'in-progress'
 async function startSession() {
   const { updateScheduleStatusWithSync } = useDatabase()
@@ -1032,7 +1043,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
     </div>
 
     <!-- COMPLETED SESSION SUMMARY VIEW -->
-    <template v-if="isAlreadyCompleted">
+    <template v-if="isAlreadyCompleted && !isEditMode">
       <div class="space-y-6">
         <!-- Completion Banner -->
         <div class="bg-gradient-to-r from-green-500 to-emerald-500 rounded-xl p-6 text-center text-white shadow-lg">
@@ -1044,9 +1055,19 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
         <!-- Session Summary Card -->
         <UCard>
           <template #header>
-            <div class="flex items-center gap-2">
-              <UIcon name="i-heroicons-document-text" class="w-5 h-5 text-primary-500" />
-              <h3 class="font-semibold">Session Summary</h3>
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-2">
+                <UIcon name="i-heroicons-document-text" class="w-5 h-5 text-primary-500" />
+                <h3 class="font-semibold">Session Summary</h3>
+              </div>
+              <UButton
+                label="Edit Session"
+                icon="i-heroicons-pencil-square"
+                color="neutral"
+                variant="soft"
+                size="sm"
+                @click="enableEditMode"
+              />
             </div>
           </template>
           
@@ -1071,20 +1092,49 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
               </div>
             </div>
 
-            <!-- Exercises List -->
+            <!-- Exercises List with Set Details -->
             <div>
-              <p class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Exercises Completed</p>
-              <div class="space-y-2">
+              <p class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Exercises Completed</p>
+              <div class="space-y-4">
                 <div 
                   v-for="exercise in exercises" 
                   :key="exercise.id"
-                  class="flex items-center justify-between p-3 bg-gray-50 dark:bg-slate-800 rounded-lg"
+                  class="bg-gray-50 dark:bg-slate-800 rounded-lg overflow-hidden"
                 >
-                  <div class="flex items-center gap-2">
-                    <UIcon name="i-heroicons-check-circle-solid" class="w-5 h-5 text-green-500" />
-                    <span class="font-medium">{{ exercise.name }}</span>
+                  <!-- Exercise Header -->
+                  <div class="flex items-center justify-between p-3 border-b border-gray-100 dark:border-slate-700">
+                    <div class="flex items-center gap-2">
+                      <UIcon name="i-heroicons-check-circle-solid" class="w-5 h-5 text-green-500" />
+                      <span class="font-medium">{{ exercise.name }}</span>
+                    </div>
+                    <span class="text-sm text-gray-500">{{ setLogs[exercise.id]?.length || 0 }} sets</span>
                   </div>
-                  <span class="text-sm text-gray-500">{{ exercise.targetSets }} × {{ exercise.targetReps }}</span>
+                  
+                  <!-- Set Details -->
+                  <div class="p-3 space-y-2">
+                    <div 
+                      v-for="(setLog, setIndex) in setLogs[exercise.id]" 
+                      :key="setIndex"
+                      class="flex items-center justify-between text-sm"
+                    >
+                      <span class="text-gray-500">Set {{ setIndex + 1 }}</span>
+                      <div class="flex items-center gap-3">
+                        <span v-if="setLog.weight" class="font-medium">{{ setLog.weight }} kg</span>
+                        <span class="text-gray-400">×</span>
+                        <span v-if="setLog.reps" class="font-medium">{{ setLog.reps }} reps</span>
+                        <UIcon 
+                          v-if="setLog.completed" 
+                          name="i-heroicons-check" 
+                          class="w-4 h-4 text-green-500" 
+                        />
+                      </div>
+                    </div>
+                    
+                    <!-- No logs message -->
+                    <p v-if="!setLogs[exercise.id]?.length" class="text-sm text-gray-400 italic">
+                      No sets logged
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1100,6 +1150,91 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
             />
           </template>
         </UCard>
+      </div>
+    </template>
+
+    <!-- EDIT MODE FOR COMPLETED SESSION -->
+    <template v-else-if="isAlreadyCompleted && isEditMode">
+      <div class="space-y-4 pb-24">
+        <!-- Edit Banner -->
+        <div class="bg-gradient-to-r from-amber-500 to-orange-500 rounded-xl p-4 text-white shadow-lg">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center gap-3">
+              <UIcon name="i-heroicons-pencil-square" class="w-8 h-8" />
+              <div>
+                <h2 class="font-bold">Editing Completed Session</h2>
+                <p class="text-amber-100 text-sm">Make corrections to the workout data</p>
+              </div>
+            </div>
+            <UButton
+              label="Done"
+              icon="i-heroicons-check"
+              color="neutral"
+              variant="solid"
+              @click="exitEditMode"
+            />
+          </div>
+        </div>
+
+        <!-- Exercise List with Editable Sets -->
+        <div v-for="exercise in exercises" :key="exercise.id" class="space-y-2">
+          <UCard>
+            <template #header>
+              <div class="flex items-center gap-2">
+                <UIcon name="i-heroicons-fire" class="w-5 h-5 text-orange-500" />
+                <h3 class="font-semibold">{{ exercise.name }}</h3>
+              </div>
+            </template>
+
+            <!-- Sets -->
+            <div class="space-y-3">
+              <div 
+                v-for="(setLog, setIndex) in setLogs[exercise.id]" 
+                :key="setIndex"
+                class="flex items-center gap-3 p-3 bg-gray-50 dark:bg-slate-800 rounded-lg"
+              >
+                <span class="text-sm font-medium text-gray-500 w-12">Set {{ setIndex + 1 }}</span>
+                
+                <div class="flex flex-col">
+                  <span class="text-xs text-gray-400 mb-1">Weight</span>
+                  <UInput
+                    v-model.number="setLog.weight"
+                    type="number"
+                    placeholder="kg"
+                    size="sm"
+                    class="w-20"
+                    @blur="persistSetLog(exercise.id, setIndex)"
+                  />
+                </div>
+                <span class="text-gray-400 mt-5">×</span>
+                <div class="flex flex-col">
+                  <span class="text-xs text-gray-400 mb-1">Reps</span>
+                  <UInput
+                    v-model.number="setLog.reps"
+                    type="number"
+                    placeholder="reps"
+                    size="sm"
+                    class="w-20"
+                    @blur="persistSetLog(exercise.id, setIndex)"
+                  />
+                </div>
+                
+                <UButton
+                  :icon="setLog.completed ? 'i-heroicons-check-circle-solid' : 'i-heroicons-check-circle'"
+                  :color="setLog.completed ? 'success' : 'neutral'"
+                  variant="ghost"
+                  size="sm"
+                  @click="toggleSetComplete(exercise.id, setIndex)"
+                />
+              </div>
+              
+              <!-- No sets message -->
+              <p v-if="!setLogs[exercise.id]?.length" class="text-center text-gray-400 py-4">
+                No sets to edit
+              </p>
+            </div>
+          </UCard>
+        </div>
       </div>
     </template>
 
