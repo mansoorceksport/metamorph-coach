@@ -47,10 +47,11 @@ async function hydrate() {
     const future7Days = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000)
     await syncSchedulesWithHydrate(today, future7Days)
     
-    // Step 5: Deep sync exercises and sets (80%)
-    message.value = 'Preparing offline data...'
+    // Step 5: Deep sync exercises and sets - DISABLED for performance
+    // Exercises/sets will be fetched on-demand when opening a session
+    message.value = 'Finalizing...'
     progress.value = 80
-    await deepSyncExercisesAndSets()
+    // await deepSyncExercisesAndSets() // Disabled: causes N×2 API calls
     
     // Done!
     progress.value = 100

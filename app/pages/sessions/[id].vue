@@ -52,15 +52,29 @@ const exercisePBs = ref<Record<string, number>>({})
 // Loading state
 const isLoading = ref(true)
 
+// Cache TTL: 5 minutes
+const CACHE_TTL_MS = 5 * 60 * 1000
+
 // Load data from database on mount
 async function loadSessionData() {
   if (!import.meta.client) return
   
   try {
-    // 1. Sync Sets & Exercises (ensure we have backend data)
-    // Run sequentially because sets depend on exercises being present to resolve ULIDs
-    await syncPlannedExercises(sessionId.value)
-    await syncScheduleSets(sessionId.value)
+    // Check if cache is still valid (avoid redundant API calls)
+    const cacheKey = `session_sync_${sessionId.value}`
+    const lastSync = localStorage.getItem(cacheKey)
+    const now = Date.now()
+    const cacheValid = lastSync && (now - parseInt(lastSync)) < CACHE_TTL_MS
+    
+    // Only sync from API if cache expired or first visit
+    if (!cacheValid && navigator.onLine) {
+      console.log(`[Session] Cache expired or first visit, syncing from API...`)
+      await syncPlannedExercises(sessionId.value)
+      await syncScheduleSets(sessionId.value)
+      localStorage.setItem(cacheKey, now.toString())
+    } else if (cacheValid) {
+      console.log(`[Session] Using cached data (expires in ${Math.round((parseInt(lastSync!) + CACHE_TTL_MS - now) / 1000)}s)`)
+    }
 
     // Load schedule
     const schedule = await getSchedule(sessionId.value)
