@@ -78,8 +78,11 @@ async function loadSessionData() {
     // Sync from API if cache expired, first visit, or no local data
     if (!cacheValid && navigator.onLine) {
       console.log(`[Session] Cache expired or no local data, syncing from API...`)
-      await syncPlannedExercises(sessionId.value)
-      await syncScheduleSets(sessionId.value)
+      // Sync exercises and sets in PARALLEL to reduce load time
+      await Promise.all([
+        syncPlannedExercises(sessionId.value),
+        syncScheduleSets(sessionId.value)
+      ])
       localStorage.setItem(cacheKey, now.toString())
     } else if (cacheValid) {
       console.log(`[Session] Using cached data (${localExercises.length} exercises, expires in ${Math.round((parseInt(lastSync!) + CACHE_TTL_MS - now) / 1000)}s)`)
@@ -156,17 +159,22 @@ async function loadSessionData() {
 }
 
 onMounted(async () => {
-  await loadSessionData()
-  await loadPersistedLogs()
-  await initLibrary()
+  // Run all initialization in PARALLEL for faster load
+  await Promise.all([
+    loadSessionData(),
+    loadPersistedLogs(),
+    initLibrary()
+  ])
 })
 
 // React to ID changes (e.g. after sync updates ULID -> ObjectId)
 watch(sessionId, async (newId) => {
   if (newId) {
     console.log('[Session] ID changed, reloading data:', newId)
-    await loadSessionData()
-    await loadPersistedLogs()
+    await Promise.all([
+      loadSessionData(),
+      loadPersistedLogs()
+    ])
   }
 })
 
