@@ -64,20 +64,28 @@ async function loadSessionData() {
     const cacheKey = `session_sync_${sessionId.value}`
     const lastSync = localStorage.getItem(cacheKey)
     const now = Date.now()
-    const cacheValid = lastSync && (now - parseInt(lastSync)) < CACHE_TTL_MS
+    const cacheTimeValid = lastSync && (now - parseInt(lastSync)) < CACHE_TTL_MS
     
-    // Only sync from API if cache expired or first visit
+    // Check if we actually have local data (cache is useless without data)
+    const schedule = await getSchedule(sessionId.value)
+    const queryId = schedule?.remote_id || sessionId.value
+    const localExercises = await fetchPlannedExercises(queryId)
+    const hasLocalData = localExercises && localExercises.length > 0
+    
+    // Only use cache if: time is valid AND we have local data
+    const cacheValid = cacheTimeValid && hasLocalData
+    
+    // Sync from API if cache expired, first visit, or no local data
     if (!cacheValid && navigator.onLine) {
-      console.log(`[Session] Cache expired or first visit, syncing from API...`)
+      console.log(`[Session] Cache expired or no local data, syncing from API...`)
       await syncPlannedExercises(sessionId.value)
       await syncScheduleSets(sessionId.value)
       localStorage.setItem(cacheKey, now.toString())
     } else if (cacheValid) {
-      console.log(`[Session] Using cached data (expires in ${Math.round((parseInt(lastSync!) + CACHE_TTL_MS - now) / 1000)}s)`)
+      console.log(`[Session] Using cached data (${localExercises.length} exercises, expires in ${Math.round((parseInt(lastSync!) + CACHE_TTL_MS - now) / 1000)}s)`)
     }
 
-    // Load schedule
-    const schedule = await getSchedule(sessionId.value)
+    // Load schedule into state
     if (schedule) {
       session.value = {
         id: schedule.id,
@@ -92,9 +100,7 @@ async function loadSessionData() {
       }
     }
 
-    // Load planned exercises
-    // Use remote_id (Mongo ID) if available, as syned exercises use that. Fallback to local ID (ULID)
-    const queryId = schedule?.remote_id || sessionId.value
+    // Re-fetch planned exercises after potential sync (they may have been updated)
     const planned = await fetchPlannedExercises(queryId)
     exercises.value = planned.map(ex => ({
       id: ex.id!, // Planned ID (Definite assignment as they come from DB)
