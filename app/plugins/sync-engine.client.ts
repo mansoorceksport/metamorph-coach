@@ -139,9 +139,18 @@ export default defineNuxtPlugin(async (nuxtApp) => {
     // Start heartbeat
     startHeartbeat()
 
-    // Attempt initial flush if online
+    // Attempt initial flush if online AND authenticated
+    // Skip on login page to avoid unnecessary /refresh API call
     if (navigator.onLine) {
-        flushQueue()
+        const { isAuthenticated } = useAuth()
+        const token = useCookie('metamorph-token')
+
+        // Only flush if user has a token (authenticated)
+        if (token.value && isAuthenticated.value) {
+            flushQueue()
+        } else {
+            console.log('[SyncEngine] Not authenticated, skipping initial flush')
+        }
     }
 
     // ============================================
