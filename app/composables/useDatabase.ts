@@ -194,6 +194,8 @@ export function useDatabase() {
 
     /**
      * Add a planned exercise with sync
+     * Returns the local ULID of the planned exercise
+     * Stores sync_item_id in local DB for dependency tracking by child operations (sets)
      */
     async function addPlannedExerciseWithSync(exercise: Omit<PlannedExercise, 'id' | 'remote_id' | 'sync_status'>): Promise<string> {
         if (!import.meta.client) throw new Error('Client-side only')
@@ -216,7 +218,7 @@ export function useDatabase() {
         const localExercise = await db.exercises.get(exercise.exercise_id)
         const backendExerciseId = localExercise?.remote_id || exercise.exercise_id
 
-        await queueSync({
+        const syncItemId = await queueSync({
             method: 'POST',
             url: `${baseUrl}/v1/pro/schedules/${backendScheduleId}/exercises`,
             body: JSON.stringify({
@@ -235,12 +237,22 @@ export function useDatabase() {
                 schedule_id: exercise.schedule_id,
                 backend_schedule_id: backendScheduleId,
                 local_exercise_id: exercise.exercise_id,
-                backend_exercise_id: backendExerciseId
+                backend_exercise_id: backendExerciseId,
+                sync_item_id: null // Will be populated after queueSync returns
             }
         })
 
+        // Store the sync item ID in a lookup map for child operations to reference
+        // Using sessionStorage for cross-function access within the same page session
+        if (syncItemId) {
+            const syncMap = JSON.parse(sessionStorage.getItem('exercise_sync_map') || '{}')
+            syncMap[id] = syncItemId
+            sessionStorage.setItem('exercise_sync_map', JSON.stringify(syncMap))
+        }
+
         return id
     }
+
 
     /**
      * CASCADE CANCELLATION HELPERS
@@ -694,6 +706,7 @@ export function useDatabase() {
     /**
      * Add a new set to an exercise with sync
      * Uses POST /v1/pro/exercises/:id/sets
+     * Includes parent_sync_id to ensure exercise is synced before sets
      */
     async function addSetWithSync(
         plannedExerciseId: string,
@@ -731,6 +744,12 @@ export function useDatabase() {
         const config = useRuntimeConfig()
         const baseUrl = config.public.apiBase || ''
 
+        // Look up parent exercise's sync item ID for dependency ordering
+        // If the exercise hasn't synced yet, this ensures the set waits
+        let parentSyncId: string | undefined
+        const syncMap = JSON.parse(sessionStorage.getItem('exercise_sync_map') || '{}')
+        parentSyncId = syncMap[plannedExerciseId]
+
         await queueSync({
             method: 'POST',
             url: `${baseUrl}/v1/pro/exercises/${backendExId}/sets`,
@@ -739,16 +758,18 @@ export function useDatabase() {
                 set_index: setIndex
             }),
             priority: 'normal',
+            parent_sync_id: parentSyncId, // Wait for parent exercise to sync first
             context: {
                 type: 'set_add',
                 temp_id: newSetLog.id,
                 planned_exercise_id: plannedExerciseId
             }
         })
-        console.log(`[Sync] Queued new set: ${newSetLog.id} for exercise ${plannedExerciseId}`)
+        console.log(`[Sync] Queued new set: ${newSetLog.id} for exercise ${plannedExerciseId}${parentSyncId ? ` (depends on: ${parentSyncId.slice(0, 8)}...)` : ''}`)
 
         return newSetLog
     }
+
 
     /**
      * Get set logs for a planned exercise (reactive)
@@ -1231,6 +1252,7 @@ export function useDatabase() {
     /**
      * Queue an API request for later sync with deduplication
      * Returns null if a duplicate already exists
+     * parent_sync_id can be passed in action to wait for a parent operation to complete first
      */
     async function queueSync(
         action: Omit<SyncQueueItem, 'id' | 'correlation_id' | 'payload_hash' | 'timestamp' | 'retryCount' | 'nextRetryAt'>,
@@ -1268,12 +1290,14 @@ export function useDatabase() {
             headers: action.headers,
             timestamp: Date.now(),
             retryCount: 0,
-            priority: action.priority
+            priority: action.priority,
+            parent_sync_id: action.parent_sync_id // Track dependency on parent operation
         }
 
         await db.syncQueue.add(item)
         await refreshPendingCount()
-        console.log(`[SyncQueue] Queued: ${action.method} ${action.url} (correlation: ${item.correlation_id.slice(0, 8)}...)`)
+        const parentInfo = item.parent_sync_id ? ` (waiting for: ${item.parent_sync_id.slice(0, 8)}...)` : ''
+        console.log(`[SyncQueue] Queued: ${action.method} ${action.url}${parentInfo}`)
 
         // Trigger immediate sync if online (with small delay to batch multiple operations)
         // Use navigator.onLine as fallback for mobile browsers
@@ -1287,6 +1311,7 @@ export function useDatabase() {
 
         return item.id
     }
+
 
     /**
      * Get all pending sync items ready for retry (respecting backoff)
@@ -1364,7 +1389,20 @@ export function useDatabase() {
 
         try {
             const items = await getPendingSyncItems()
-            console.log(`[SyncQueue] Processing ${items.length} pending items (online: ${effectivelyOnline})`)
+
+            // Get all current queue IDs to check for unresolved dependencies
+            const queueIds = new Set(items.map(i => i.id))
+
+            // Filter out items whose parent hasn't synced yet
+            const readyItems = items.filter(item => {
+                if (item.parent_sync_id && queueIds.has(item.parent_sync_id)) {
+                    console.log(`[SyncQueue] Skipping ${item.context?.type || item.method} - waiting for parent ${item.parent_sync_id.slice(0, 8)}...`)
+                    return false
+                }
+                return true
+            })
+
+            console.log(`[SyncQueue] Processing ${readyItems.length}/${items.length} ready items (online: ${effectivelyOnline})`)
 
             // Get auth token from cookie
             const metamorphToken = useCookie<string | null>('metamorph-token')
@@ -1379,7 +1417,7 @@ export function useDatabase() {
                 tokenRefreshed = true
             }
 
-            for (const item of items) {
+            for (const item of readyItems) {
                 try {
                     // Build request with X-Correlation-ID and Authorization headers
                     const headers: Record<string, string> = {
@@ -1388,6 +1426,7 @@ export function useDatabase() {
                         'Authorization': `Bearer ${metamorphToken.value}`,
                         ...(item.headers || {})
                     }
+
 
                     let response = await fetch(item.url, {
                         method: item.method,
@@ -1516,11 +1555,21 @@ export function useDatabase() {
                                         await db.syncQueue.update(pendingSet.id, { url: newUrl })
                                         console.log(`[Sync] Fixed pending set URL for set ${pendingSet.context?.set_index}`)
                                     }
+
+                                    // Clean up sessionStorage sync map entry
+                                    try {
+                                        const syncMap = JSON.parse(sessionStorage.getItem('exercise_sync_map') || '{}')
+                                        delete syncMap[localId]
+                                        sessionStorage.setItem('exercise_sync_map', JSON.stringify(syncMap))
+                                    } catch (e) {
+                                        // Ignore sessionStorage errors
+                                    }
                                 }
                             } catch (e) {
                                 console.error('[SyncQueue] Failed to update local exercise IDs:', e)
                             }
                         }
+
 
                         // Handle set creation - populate remote_id
                         if (item.method === 'POST' && item.context?.type === 'set_add') {
@@ -1572,10 +1621,26 @@ export function useDatabase() {
         } finally {
             isSyncing.value = false
             await refreshPendingCount()
+
+            // If we processed some items successfully, there may be blocked children now ready
+            // Re-trigger sync with a delay to process them
+            if (success > 0) {
+                const remainingItems = await getPendingSyncItems()
+                const hasBlockedChildren = remainingItems.some(item => item.parent_sync_id)
+                if (hasBlockedChildren) {
+                    console.log('[SyncQueue] Parent items synced, re-triggering for child items...')
+                    setTimeout(() => {
+                        processSyncQueue().catch(err =>
+                            console.error('[SyncQueue] Child sync failed:', err)
+                        )
+                    }, 200) // Small delay to batch
+                }
+            }
         }
 
         return { success, failed }
     }
+
 
     /**
      * Attempt to refresh the access token using refresh token cookie

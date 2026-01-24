@@ -83,6 +83,7 @@ export interface SyncQueueItem {
     lastError?: string
     nextRetryAt?: number // Unix timestamp for exponential backoff
     priority: 'high' | 'normal' | 'low'
+    parent_sync_id?: string // ULID of parent sync item - wait for parent to complete before processing
 }
 
 /**
