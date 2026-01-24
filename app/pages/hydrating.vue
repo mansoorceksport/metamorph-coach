@@ -78,7 +78,8 @@ async function syncMasterExercises() {
     
     if (exercises && exercises.length > 0) {
       const localExercises = exercises.map(ex => ({
-        id: ex.id || ex._id,
+        id: ex.id || ex._id, // Use backend ID as local ID for simplicity
+        remote_id: ex.id || ex._id, // Also store as remote_id for consistency
         name: ex.name,
         muscle_group: ex.muscle_group || ex.category,
         category: ex.category,

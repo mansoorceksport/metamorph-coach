@@ -46,7 +46,8 @@ export function useExerciseLibrary() {
 
             // Transform and cache in Dexie
             const exercises: Exercise[] = response.map(ex => ({
-                id: ex.id,
+                id: ex.id, // Use backend MongoDB ObjectID as local ID
+                remote_id: ex.id, // Also store as remote_id for consistency
                 name: ex.name,
                 muscle_group: ex.muscle_group,
                 equipment: ex.equipment,

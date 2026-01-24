@@ -33,7 +33,8 @@ export interface Schedule {
  * Exercise with PB tracking for real-time strength win alerts
  */
 export interface Exercise {
-    id: string
+    id: string // Local ID (may be ULID or MongoDB ObjectID)
+    remote_id?: string | null // Backend MongoDB ObjectID (if synced from backend)
     name: string
     muscle_group: string
     equipment: string
@@ -209,8 +210,8 @@ export async function clearAllData(): Promise<void> {
         db.cachedMembers.clear(),
         db.plannedExercises.clear(),
         db.setLogs.clear(),
-        db.syncQueue.clear()
-        // Note: Keep exercises as they're global catalog data
+        db.syncQueue.clear(),
+        db.exercises.clear() // Also clear exercises on logout to force fresh sync
     ])
     console.log('[Database] All user data cleared')
 }

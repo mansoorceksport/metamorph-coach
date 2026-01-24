@@ -199,9 +199,6 @@ export function useDatabase() {
         if (!import.meta.client) throw new Error('Client-side only')
 
         // 1. Save locally with temp ID
-        // Note: generateId is usually ulid() or similar. 
-        // Existing code uses generateId() or ulid()? Let's check imports or other usages. 
-        // Previous view showed `const id = generateId()` in addPlannedExercise. so use that.
         const id = generateId()
         await db.plannedExercises.add({ ...exercise, id, remote_id: null, sync_status: 'pending' })
 
@@ -213,12 +210,18 @@ export function useDatabase() {
         const schedule = await db.schedules.get(exercise.schedule_id)
         const backendScheduleId = schedule?.remote_id || exercise.schedule_id
 
+        // Resolve exercise's remote_id for the backend request body
+        // For exercises from backend, use remote_id (MongoDB ObjectID)
+        // For newly created local exercises, use the local id (ULID - backend will resolve via client_id)
+        const localExercise = await db.exercises.get(exercise.exercise_id)
+        const backendExerciseId = localExercise?.remote_id || exercise.exercise_id
+
         await queueSync({
             method: 'POST',
             url: `${baseUrl}/v1/pro/schedules/${backendScheduleId}/exercises`,
             body: JSON.stringify({
                 client_id: id, // Local ULID for identity handshake
-                exercise_id: exercise.exercise_id,
+                exercise_id: backendExerciseId, // Use resolved backend ID
                 target_sets: exercise.target_sets,
                 target_reps: exercise.target_reps,
                 rest_seconds: exercise.rest_seconds,
@@ -230,7 +233,9 @@ export function useDatabase() {
                 type: 'exercise_add',
                 temp_id: id,
                 schedule_id: exercise.schedule_id,
-                backend_schedule_id: backendScheduleId
+                backend_schedule_id: backendScheduleId,
+                local_exercise_id: exercise.exercise_id,
+                backend_exercise_id: backendExerciseId
             }
         })
 
@@ -1443,6 +1448,47 @@ export function useDatabase() {
                                 }
                             } catch (parseErr) {
                                 console.warn('[SyncQueue] Could not parse schedule response:', parseErr)
+                            }
+                        }
+
+                        // Handle global exercise creation - populate remote_id (Dual-Identity)
+                        // This is for exercises created via createCustomExercise (not planned exercises)
+                        if (item.method === 'POST' && item.context?.type === 'exercise_create') {
+                            try {
+                                const backendEx = await response.json()
+                                const localId = item.context.temp_id
+                                if (backendEx.id && localId) {
+                                    // Update local exercise with remote_id
+                                    await db.exercises.update(localId, {
+                                        remote_id: backendEx.id
+                                    })
+                                    console.log(`[Sync] Linked global exercise: ${localId} → ${backendEx.id}`)
+
+                                    // Rewrite pending exercise_add items that reference this exercise
+                                    // They may have used the ULID as exercise_id in the body
+                                    const pendingAdds = await db.syncQueue
+                                        .filter(q => q.context?.type === 'exercise_add' && q.context?.local_exercise_id === localId)
+                                        .toArray()
+
+                                    for (const pending of pendingAdds) {
+                                        if (pending.body) {
+                                            try {
+                                                const bodyObj = JSON.parse(pending.body)
+                                                if (bodyObj.exercise_id === localId) {
+                                                    bodyObj.exercise_id = backendEx.id
+                                                    await db.syncQueue.update(pending.id, {
+                                                        body: JSON.stringify(bodyObj)
+                                                    })
+                                                    console.log(`[Sync] Fixed pending add: exercise_id ${localId} → ${backendEx.id}`)
+                                                }
+                                            } catch (e) {
+                                                console.warn('[Sync] Could not update pending add body:', e)
+                                            }
+                                        }
+                                    }
+                                }
+                            } catch (e) {
+                                console.error('[SyncQueue] Failed to update local global exercise:', e)
                             }
                         }
 
