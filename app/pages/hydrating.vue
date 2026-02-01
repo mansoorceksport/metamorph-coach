@@ -9,7 +9,7 @@ const { db } = await import('~/utils/db')
 
 // Progress state
 const progress = ref(0)
-const message = ref('Initializing...')
+const message = ref('hydrating.initializing')
 const hasError = ref(false)
 const errorMessage = ref('')
 
@@ -25,37 +25,37 @@ async function hydrate() {
 
   try {
     // Step 1: Sync exercises (10%)
-    message.value = 'Loading exercises...'
+    message.value = 'hydrating.loadingExercises'
     progress.value = 10
     await syncMasterExercises()
     
     // Step 2: Sync clients (25%)
-    message.value = 'Loading your clients...'
+    message.value = 'hydrating.loadingClients'
     progress.value = 25
     await syncClients()
     
     // Step 3: Sync schedule history - past 10 days (40%)
-    message.value = 'Syncing schedule history...'
+    message.value = 'hydrating.syncingHistory'
     progress.value = 40
     const today = new Date()
     const past10Days = new Date(today.getTime() - 10 * 24 * 60 * 60 * 1000)
     await syncSchedulesWithHydrate(past10Days, today)
     
     // Step 4: Sync future schedules - next 7 days (60%)
-    message.value = 'Syncing upcoming sessions...'
+    message.value = 'hydrating.syncingUpcoming'
     progress.value = 60
     const future7Days = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000)
     await syncSchedulesWithHydrate(today, future7Days)
     
     // Step 5: Deep sync exercises and sets - DISABLED for performance
     // Exercises/sets will be fetched on-demand when opening a session
-    message.value = 'Finalizing...'
+    message.value = 'hydrating.finalizing'
     progress.value = 80
     // await deepSyncExercisesAndSets() // Disabled: causes N×2 API calls
     
     // Done!
     progress.value = 100
-    message.value = 'Ready!'
+    message.value = 'hydrating.ready'
     
     // Brief pause to show 100% before redirect
     await new Promise(resolve => setTimeout(resolve, 500))
@@ -207,10 +207,10 @@ onMounted(() => {
       <div v-if="hasError" class="space-y-6">
         <div class="bg-red-500/10 border border-red-500/20 rounded-xl p-6">
           <UIcon name="i-heroicons-exclamation-triangle" class="w-12 h-12 mx-auto text-red-400 mb-4" />
-          <h2 class="text-lg font-semibold text-white mb-2">Something went wrong</h2>
+          <h2 class="text-lg font-semibold text-white mb-2">{{ $t('hydrating.errorTitle') }}</h2>
           <p class="text-sm text-gray-400 mb-4">{{ errorMessage }}</p>
           <UButton
-            label="Try Again"
+            :label="$t('hydrating.tryAgain')"
             color="primary"
             @click="retry"
           />
@@ -220,9 +220,9 @@ onMounted(() => {
       <!-- Loading State -->
       <div v-else class="space-y-6">
         <div class="space-y-2">
-          <h2 class="text-xl font-semibold text-white">Please wait...</h2>
-          <p class="text-gray-400 text-sm">We're setting up your workspace</p>
-          <p class="text-gray-500 text-xs">This only takes a moment</p>
+          <h2 class="text-xl font-semibold text-white">{{ $t('hydrating.pleaseWait') }}</h2>
+          <p class="text-gray-400 text-sm">{{ $t('hydrating.settingUp') }}</p>
+          <p class="text-gray-500 text-xs">{{ $t('hydrating.moment') }}</p>
         </div>
 
         <!-- Progress Bar -->
@@ -233,7 +233,7 @@ onMounted(() => {
               :style="{ width: `${progress}%` }"
             />
           </div>
-          <p class="text-sm text-gray-400">{{ message }}</p>
+          <p class="text-sm text-gray-400">{{ $t(message) }}</p>
         </div>
       </div>
     </div>

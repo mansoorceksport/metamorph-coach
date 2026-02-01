@@ -11,6 +11,7 @@ const emit = defineEmits<{
 }>()
 
 const toast = useToast()
+const { t } = useI18n()
 
 // Packages
 const packages = ref<any[]>([])
@@ -106,7 +107,7 @@ watch(() => props.open, (isOpen) => {
             <UIcon name="i-heroicons-clipboard-document-list" class="w-6 h-6 text-white" />
           </div>
           <div>
-            <h2 class="text-xl font-bold text-gray-900 dark:text-white">Add Package</h2>
+            <h2 class="text-xl font-bold text-gray-900 dark:text-white">{{ $t('modals.addContract') }}</h2>
             <p class="text-sm text-gray-500">{{ props.memberName || 'Select a package' }}</p>
           </div>
         </div>
@@ -166,14 +167,14 @@ watch(() => props.open, (isOpen) => {
           <!-- Actions -->
           <div class="flex gap-3 pt-4">
             <UButton
-              label="Cancel"
+              :label="$t('common.cancel')"
               color="neutral"
               variant="outline"
               class="flex-1"
               @click="$emit('close')"
             />
             <UButton
-              label="Add Package"
+              :label="$t('modals.addContract')"
               color="primary"
               class="flex-1"
               :loading="isSubmitting"

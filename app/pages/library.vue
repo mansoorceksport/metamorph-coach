@@ -3,6 +3,7 @@ import { useExerciseLibrary } from '~/composables/useExerciseLibrary'
 
 // Exercise library composable
 const { exercises, loading, initLibrary, forceSync } = useExerciseLibrary()
+const { t } = useI18n()
 
 // Search and filter state
 const searchQuery = ref('')
@@ -266,9 +267,9 @@ function getMuscleColor(group: string): string {
   <div class="space-y-6">
     <!-- Header Section -->
     <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-      <h1 class="text-3xl font-bold">Exercise Library</h1>
+      <h1 class="text-3xl font-bold">{{ $t('library.title') }}</h1>
       <UButton
-        label="Add Exercise"
+        :label="$t('library.addExercise')"
         color="primary"
         size="lg"
         icon="i-lucide-plus"
@@ -281,7 +282,7 @@ function getMuscleColor(group: string): string {
       <div class="flex-1">
         <UInput
           v-model="searchQuery"
-          placeholder="Search exercises..."
+          :placeholder="$t('library.searchPlaceholder')"
           icon="i-lucide-search"
           size="lg"
           class="w-full"
@@ -318,7 +319,7 @@ function getMuscleColor(group: string): string {
       </p>
       <UButton
         v-if="!searchQuery && selectedMuscleGroup === 'all'"
-        label="Add Exercise"
+        :label="$t('library.addExercise')"
         color="primary"
         class="mt-4"
         @click="openModal"
@@ -393,7 +394,7 @@ function getMuscleColor(group: string): string {
               class="inline-flex items-center gap-1.5 text-sm text-red-500 hover:text-red-600"
             >
               <UIcon name="i-lucide-play-circle" class="w-4 h-4" />
-              <span>Watch Video</span>
+              <span>{{ $t('library.watchVideo') }}</span>
             </a>
           </div>
 
@@ -405,7 +406,7 @@ function getMuscleColor(group: string): string {
               class="inline-flex items-center gap-1.5 text-sm text-primary-500 hover:text-primary-600"
             >
               <UIcon name="i-lucide-external-link" class="w-4 h-4" />
-              <span>View Guide</span>
+              <span>{{ $t('library.viewGuide') }}</span>
             </a>
           </div>
         </div>

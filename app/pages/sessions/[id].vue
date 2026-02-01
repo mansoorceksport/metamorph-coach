@@ -3,6 +3,7 @@ import type { PlannedExercise } from '~/utils/db'
 
 const route = useRoute()
 const sessionId = computed(() => route.params.id as string)
+const { t } = useI18n()
 
 // Database composable
 const { 
@@ -93,7 +94,7 @@ async function loadSessionData() {
       session.value = {
         id: schedule.id,
         memberName: schedule.member_name,
-        goal: schedule.session_goal || 'Workout Session',
+        goal: schedule.session_goal || t('session.trainingSession'),
         startTime: new Date(schedule.start_time).toLocaleTimeString('en-US', { 
           hour: 'numeric', 
           minute: '2-digit',
@@ -706,8 +707,8 @@ async function removeExerciseFromPlan(plannedExerciseId: string) {
     delete setLogs.value[plannedExerciseId]
     
     toast.add({
-      title: 'Exercise Removed',
-      description: `${exerciseName} removed from plan`,
+      title: t('session.exerciseRemovedTitle'),
+      description: t('session.exerciseRemoved', { name: exerciseName }),
       icon: 'i-heroicons-trash',
       color: 'warning'
     })
@@ -716,7 +717,7 @@ async function removeExerciseFromPlan(plannedExerciseId: string) {
   } catch (error) {
     console.error('[Session] Failed to remove exercise:', error)
     toast.add({
-      title: 'Failed to remove exercise',
+      title: t('session.failedToRemove'),
       color: 'error'
     })
   }
@@ -742,7 +743,7 @@ const sessionImprovements = computed(() => {
         improvements.push({
           type: 'pb',
           exercise: ex.name,
-          detail: `New PB: ${log.weight}kg (was ${pb}kg) - Set ${index + 1}`
+          detail: t('session.newPBDetail', { weight: log.weight, old: pb, set: index + 1 })
         })
       }
     })
@@ -754,7 +755,7 @@ const sessionImprovements = computed(() => {
         improvements.push({
           type: 'endurance',
           exercise: ex.name,
-          detail: `Extra reps: ${log.reps} reps (target was ${targetReps}) - Set ${index + 1}`
+          detail: t('session.extraRepsDetail', { reps: log.reps, target: targetReps, set: index + 1 })
         })
       }
     })
@@ -853,8 +854,8 @@ async function completeFinalFinish() {
 
     // Show offline toast
     toast.add({
-      title: 'Saved Offline',
-      description: "We'll sync your session as soon as you're back online.",
+      title: t('session.savedOffline'),
+      description: t('session.savedOfflineDesc'),
       icon: 'i-heroicons-cloud-arrow-up',
       color: 'warning'
     })
@@ -924,8 +925,8 @@ async function handleExercisePickerSelect(payload: { exerciseId: string; name: s
       
       const toast = useToast()
       toast.add({
-        title: 'Exercise Replaced',
-        description: `Swapped to ${payload.name}`,
+        title: t('library.exerciseUpdated'), // Reusing closest key or generic success
+        description: t('session.exerciseReplaced', { name: payload.name }),
         icon: 'i-heroicons-arrows-right-left',
         color: 'success'
       })
@@ -962,8 +963,8 @@ async function handleExercisePickerCreateNew(payload: { name: string; muscleGrou
       
       const toast = useToast()
       toast.add({
-        title: 'Exercise Created & Replaced',
-        description: `Swapped to ${payload.name}`,
+        title: t('library.exerciseCreated'),
+        description: t('session.exerciseReplaced', { name: payload.name }),
         icon: 'i-heroicons-plus-circle',
         color: 'success'
       })
@@ -1008,22 +1009,27 @@ async function addExerciseToSession(exerciseId: string, name: string) {
   
   const toast = useToast()
   toast.add({
-    title: 'Exercise Added',
-    description: `Added ${name} to session`,
+    title: t('library.addExercise'), // Using generic title "Add Exercise" or create specific
+    description: t('session.addedToSession', { name: name }),
     icon: 'i-heroicons-plus-circle',
     color: 'success'
   })
 }
 
 // Motivation messages
-const motivationMessages = [
-  "🎉 Amazing workout! You crushed it today!",
-  "💪 Beast mode activated! Great session!",
-  "🔥 Every rep counts! You're getting stronger!",
-  "⭐ Champion mentality! Keep pushing!",
-  "🏆 Another session in the books! Well done!"
-]
-const randomMotivation = motivationMessages[Math.floor(Math.random() * motivationMessages.length)]
+const motivationIndex = ref(0)
+const motivationMessages = computed(() => {
+  const msgs = []
+  for (let i = 1; i <= 5; i++) {
+    msgs.push(t(`session.motivation.${i}`))
+  }
+  return msgs
+})
+const randomMotivation = computed(() => motivationMessages.value[motivationIndex.value])
+
+onMounted(() => {
+  motivationIndex.value = Math.floor(Math.random() * 5)
+})
 </script>
 
 <template>
@@ -1076,8 +1082,8 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
         <!-- Completion Banner -->
         <div class="bg-gradient-to-r from-green-500 to-emerald-500 rounded-xl p-6 text-center text-white shadow-lg">
           <UIcon name="i-heroicons-check-badge" class="w-16 h-16 mx-auto mb-3" />
-          <h2 class="text-2xl font-bold mb-2">Session Completed!</h2>
-          <p class="text-green-100">This workout has been successfully finished.</p>
+          <h2 class="text-2xl font-bold mb-2">{{ $t('session.sessionComplete') }}</h2>
+          <p class="text-green-100">{{ $t('session.sessionCompleteDesc') || 'This workout has been successfully finished.' }}</p>
         </div>
 
         <!-- Session Summary Card -->
@@ -1086,10 +1092,10 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
                 <UIcon name="i-heroicons-document-text" class="w-5 h-5 text-primary-500" />
-                <h3 class="font-semibold">Session Summary</h3>
+                <h3 class="font-semibold">{{ $t('session.sessionSummary') }}</h3>
               </div>
               <UButton
-                label="Edit Session"
+                :label="$t('common.edit') + ' ' + $t('nav.schedule')"
                 icon="i-heroicons-pencil-square"
                 color="neutral"
                 variant="soft"
@@ -1190,12 +1196,12 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
             <div class="flex items-center gap-3">
               <UIcon name="i-heroicons-pencil-square" class="w-8 h-8" />
               <div>
-                <h2 class="font-bold">Editing Completed Session</h2>
-                <p class="text-amber-100 text-sm">Make corrections to the workout data</p>
+                <h2 class="font-bold">{{ $t('session.editingCompletedSession') }}</h2>
+                <p class="text-amber-100 text-sm">{{ $t('session.makeCorrections') }}</p>
               </div>
             </div>
             <UButton
-              label="Done"
+              :label="$t('session.done')"
               icon="i-heroicons-check"
               color="neutral"
               variant="solid"
@@ -1272,8 +1278,8 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
         <!-- Preview Banner -->
         <div class="bg-gradient-to-r from-blue-500 to-indigo-500 rounded-xl p-6 text-center text-white shadow-lg">
           <UIcon name="i-heroicons-pencil-square" class="w-12 h-12 mx-auto mb-3" />
-          <h2 class="text-xl font-bold mb-2">Plan Session</h2>
-          <p class="text-blue-100 text-sm">Add exercises and set targets for {{ session.memberName }}</p>
+          <h2 class="text-xl font-bold mb-2">{{ $t('session.planSession') }}</h2>
+          <p class="text-blue-100 text-sm">{{ $t('session.planSessionDesc', { name: session.memberName }) }}</p>
         </div>
 
         <!-- Session Info Card -->
@@ -1281,7 +1287,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
           <template #header>
             <div class="flex items-center gap-2">
               <UIcon name="i-heroicons-information-circle" class="w-5 h-5 text-primary-500" />
-              <h3 class="font-semibold">Session Details</h3>
+              <h3 class="font-semibold">{{ $t('session.sessionDetails') }}</h3>
             </div>
           </template>
           
@@ -1311,10 +1317,10 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
                 <UIcon name="i-heroicons-clipboard-document-list" class="w-5 h-5 text-primary-500" />
-                <h3 class="font-semibold">Workout Plan</h3>
+                <h3 class="font-semibold">{{ $t('session.workoutPlan') }}</h3>
               </div>
               <UButton
-                label="Add Exercise"
+                :label="$t('library.addExercise')"
                 color="primary"
                 variant="soft"
                 size="sm"
@@ -1327,9 +1333,9 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
           <!-- Empty State -->
           <div v-if="exercises.length === 0" class="text-center py-8">
             <UIcon name="i-heroicons-clipboard-document" class="w-12 h-12 mx-auto text-gray-300 dark:text-gray-600 mb-3" />
-            <p class="text-gray-500 mb-4">No exercises planned yet</p>
+            <p class="text-gray-500 mb-4">{{ $t('session.noExercisesPlanned') }}</p>
             <UButton
-              label="Add First Exercise"
+              :label="$t('session.addFirstExercise')"
               color="primary"
               icon="i-heroicons-plus"
               @click="showAddExercise = true"
@@ -1385,7 +1391,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
                   />
                 </div>
                 <div>
-                  <label class="text-xs text-gray-500 block mb-1">Rest (sec)</label>
+                  <label class="text-xs text-gray-500 block mb-1">{{ $t('session.restSec') }}</label>
                   <UInput
                     :model-value="exercise.restSeconds"
                     type="number"
@@ -1399,7 +1405,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
 
               <!-- Notes Field -->
               <div>
-                <label class="text-xs text-gray-500 block mb-1">Notes / Goal</label>
+                <label class="text-xs text-gray-500 block mb-1">{{ $t('session.notesGoal') }}</label>
                 <UTextarea
                   :model-value="exercise.notes || ''"
                   placeholder="E.g., Focus on form, increase weight from last week..."
@@ -1415,7 +1421,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
         <!-- Add Exercise Button (Bottom of list) -->
         <div class="text-center py-4 border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-xl bg-gray-50/50 dark:bg-slate-800/50">
           <UButton
-            label="Add Another Exercise"
+            :label="$t('session.addAnotherExercise')"
             icon="i-heroicons-plus-circle"
             color="primary"
             variant="soft"
@@ -1429,7 +1435,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
         <div class="fixed bottom-20 md:bottom-4 left-0 right-0 px-4 lg:left-64 z-40">
           <div class="max-w-4xl mx-auto">
             <UButton
-              label="Start Session"
+              :label="$t('session.startSession')"
               color="primary"
               size="xl"
               icon="i-heroicons-play-circle"
@@ -1437,7 +1443,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
               @click="startSession"
             />
             <UButton
-              label="Cancel Session"
+              :label="$t('common.cancel')"
               color="error"
               size="xl"
               icon="i-heroicons-x-circle"
@@ -1457,7 +1463,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
     <!-- Focus Mode Toggle Button -->
     <div class="flex justify-end mb-4">
       <UButton
-        label="Mode Latihan"
+        :label="$t('session.focusMode')"
         icon="i-heroicons-tv"
         color="primary"
         variant="soft"
@@ -1469,9 +1475,9 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
     <!-- Progress Bar (Moved to Top) -->
     <div class="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-gray-800 p-4">
       <div class="flex items-center justify-between mb-2">
-        <span class="text-sm font-medium text-gray-700 dark:text-gray-300">Session Progress</span>
+        <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ $t('session.sessionProgress') }}</span>
         <span class="text-sm font-bold text-primary-600 dark:text-primary-400">
-          {{ overallProgress.completed }}/{{ overallProgress.total }} sets ({{ overallProgress.percentage }}%)
+          {{ overallProgress.completed }}/{{ overallProgress.total }} {{ $t('session.sets') }} ({{ overallProgress.percentage }}%)
         </span>
       </div>
       <div class="h-3 bg-gray-100 dark:bg-gray-800 rounded-full overflow-hidden">
@@ -1515,7 +1521,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
           <!-- Exercise Meta -->
           <div class="flex flex-wrap items-center gap-x-3 gap-y-1 mb-4 pb-3 border-b border-gray-100 dark:border-gray-800">
             <p class="text-sm text-gray-500 dark:text-gray-400">
-              Target: {{ exercise.targetSets }} sets × {{ exercise.targetReps }} reps
+              Target: {{ exercise.targetSets }} {{ $t('session.sets') }} × {{ exercise.targetReps }} {{ $t('session.reps') }}
               <span v-if="exercise.restSeconds" class="ml-2">• {{ exercise.restSeconds }}s rest</span>
             </p>
             <span v-if="getPB(exercise.exerciseId) > 0" class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 text-xs font-medium">
@@ -1523,7 +1529,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
               PB: {{ getPB(exercise.exerciseId) }}kg
             </span>
             <span class="text-sm font-medium text-primary-600 dark:text-primary-400 ml-auto">
-              {{ getExerciseProgress(exercise.id).completed }}/{{ getExerciseProgress(exercise.id).total }} sets
+              {{ getExerciseProgress(exercise.id).completed }}/{{ getExerciseProgress(exercise.id).total }} {{ $t('session.sets') }}
             </span>
             <!-- Delete Exercise Button -->
             <UButton
@@ -1558,7 +1564,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
 
               <!-- Weight Input -->
               <div class="flex-1 min-w-0">
-                <label class="text-xs text-gray-500 dark:text-gray-400 mb-0.5 block">Weight</label>
+                <label class="text-xs text-gray-500 dark:text-gray-400 mb-0.5 block">{{ $t('session.weight') }}</label>
                 <div class="relative">
                   <UInput
                     v-model.number="setLog.weight"
@@ -1593,7 +1599,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
 
               <!-- Reps Input -->
               <div class="flex-1 min-w-0">
-                <label class="text-xs text-gray-500 dark:text-gray-400 mb-0.5 block">Reps</label>
+                <label class="text-xs text-gray-500 dark:text-gray-400 mb-0.5 block">{{ $t('session.reps') }}</label>
                 <UInput
                   v-model.number="setLog.reps"
                   type="number"
@@ -1638,7 +1644,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
           <!-- Add Set Button -->
           <div class="mt-3">
             <UButton
-              label="Add Set"
+              :label="$t('session.addSet')"
               icon="i-heroicons-plus"
               color="neutral"
               variant="outline"
@@ -1661,7 +1667,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
     <div class="bg-white dark:bg-slate-900 rounded-xl border border-dashed border-gray-300 dark:border-gray-700 p-4">
       <div v-if="!showAddExercise" class="text-center">
         <UButton
-          label="Add Exercise"
+          :label="$t('library.addExercise')"
           icon="i-heroicons-plus-circle"
           color="neutral"
           variant="ghost"
@@ -1713,7 +1719,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
         <!-- Action Buttons -->
         <div class="flex gap-2">
           <UButton
-            label="Add Exercise"
+            :label="$t('library.addExercise')"
             icon="i-heroicons-check"
             color="primary"
             class="flex-1"
@@ -1741,7 +1747,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
         class="bg-gradient-to-r from-green-500 to-emerald-500 rounded-xl p-6 text-center text-white shadow-lg"
       >
         <UIcon name="i-heroicons-trophy" class="w-12 h-12 mx-auto mb-3" />
-        <h3 class="text-xl font-bold mb-2">Session Complete!</h3>
+        <h3 class="text-xl font-bold mb-2">{{ $t('session.sessionComplete') }}!</h3>
         <p class="text-green-100">{{ randomMotivation }}</p>
       </div>
     </Transition>
@@ -1749,7 +1755,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
     <!-- Finish Session Button (Sticky Footer) -->
     <div class="sticky bottom-0 left-0 right-0 p-4 bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm border-t border-gray-200 dark:border-gray-800 -mx-4 sm:-mx-6">
       <UButton
-        :label="isSessionComplete ? 'Complete Workout 🎉' : 'Finish Session'"
+        :label="isSessionComplete ? $t('session.completeWorkout') : $t('session.finishSession')"
         :color="isSessionComplete ? 'success' : 'primary'"
         size="lg"
         :icon="isSessionComplete ? 'i-heroicons-trophy' : 'i-heroicons-check-circle'"
@@ -1770,14 +1776,14 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
               <UIcon name="i-heroicons-plus-circle" class="w-6 h-6 text-primary-500" />
             </div>
             <div>
-              <h3 class="text-xl font-bold text-gray-900 dark:text-white">Add Exercise</h3>
-              <p class="text-sm text-gray-500 dark:text-gray-400">Search and add to workout plan</p>
+              <h3 class="text-xl font-bold text-gray-900 dark:text-white">{{ $t('library.addExercise') }}</h3>
+              <p class="text-sm text-gray-500 dark:text-gray-400">{{ $t('library.noExercisesDesc') }}</p>
             </div>
           </div>
 
           <!-- Exercise Dropdown -->
           <div class="mb-4">
-            <label class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">Select Exercise</label>
+            <label class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">{{ $t('session.selectExercise') }}</label>
             <UInputMenu
               v-model="selectedExercise"
               :items="exerciseOptions"
@@ -1818,7 +1824,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
           <!-- Action Buttons -->
           <div class="flex gap-3">
             <UButton
-              label="Cancel"
+              :label="$t('common.cancel')"
               color="neutral"
               variant="ghost"
               size="lg"
@@ -1826,7 +1832,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
               @click="showAddExercise = false; selectedExercise = undefined"
             />
             <UButton
-              label="Add Exercise"
+              :label="$t('library.addExercise')"
               icon="i-heroicons-check"
               color="primary"
               size="lg"
@@ -1846,13 +1852,13 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
           <div class="w-20 h-20 mx-auto mb-6 bg-primary-100 dark:bg-primary-900/30 rounded-full flex items-center justify-center">
             <UIcon name="i-heroicons-hand-raised" class="w-10 h-10 text-primary-500" />
           </div>
-          <h3 class="text-2xl font-bold text-gray-900 dark:text-white mb-3">Ready to Wrap Up?</h3>
+          <h3 class="text-2xl font-bold text-gray-900 dark:text-white mb-3">{{ $t('session.readyToWrapUp') }}</h3>
           <p class="text-gray-500 dark:text-gray-400 mb-8 text-base">
-            End the session with <span class="font-semibold text-gray-700 dark:text-gray-300">{{ session.memberName }}</span>?
+            {{ $t('session.endSessionPrompt', { name: session.memberName }) }}
           </p>
           <div class="flex gap-4">
             <UButton 
-              label="Not Yet" 
+              :label="$t('session.notYet')" 
               color="neutral" 
               variant="soft" 
               size="lg"
@@ -1861,7 +1867,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
               @click="showConfirmModal = false" 
             />
             <UButton 
-              label="Yes, Finish" 
+              :label="$t('session.yesFinish')" 
               color="primary" 
               size="lg"
               class="flex-1"
@@ -1882,25 +1888,25 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
               <UIcon name="i-heroicons-pencil-square" class="w-6 h-6 text-yellow-600 dark:text-yellow-400" />
             </div>
             <div>
-              <h3 class="text-xl font-bold text-gray-900 dark:text-white">Session Notes</h3>
-              <p class="text-sm text-gray-500 dark:text-gray-400">Add coach remarks for this session</p>
+              <h3 class="text-xl font-bold text-gray-900 dark:text-white">{{ $t('session.sessionNotes') }}</h3>
+              <p class="text-sm text-gray-500 dark:text-gray-400">{{ $t('session.addCoachRemarks') }}</p>
             </div>
           </div>
           
           <div class="mb-6">
             <UTextarea
               v-model="coachRemarks"
-              placeholder="e.g., Great progress on squats today! Form improved significantly. Need to focus on hip hinge for deadlifts next session..."
+              :placeholder="$t('session.notesPlaceholder')"
               :rows="5"
               :ui="{ base: 'text-base' }"
               autofocus
             />
-            <p class="text-xs text-gray-400 mt-2">These notes will be saved to the member's session history</p>
+            <p class="text-xs text-gray-400 mt-2">{{ $t('session.notesInfo') }}</p>
           </div>
           
           <div class="flex gap-3">
             <UButton 
-              label="Skip for Now" 
+              :label="$t('session.skipForNow')" 
               color="neutral" 
               variant="ghost" 
               size="lg"
@@ -1908,7 +1914,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
               @click="coachRemarks = ''; submitRemarks()" 
             />
             <UButton 
-              label="Save Notes" 
+              :label="$t('session.saveNotes')" 
               color="primary" 
               size="lg"
               class="flex-1"
@@ -1947,7 +1953,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
               </div>
               <div class="bg-gray-50 dark:bg-gray-800 rounded-xl p-4 text-center">
                 <p class="text-3xl font-bold text-green-500">{{ sessionImprovements.filter(i => i.type === 'pb').length }}</p>
-                <p class="text-xs text-gray-500 mt-1">New PRs</p>
+                <p class="text-xs text-gray-500 mt-1">{{ $t('session.newPRs') }}</p>
               </div>
             </div>
 
@@ -1955,7 +1961,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
             <div v-if="sessionImprovements.length > 0">
               <h4 class="text-sm font-semibold text-gray-500 mb-3 uppercase tracking-wider flex items-center gap-2">
                 <UIcon name="i-heroicons-sparkles" class="w-4 h-4 text-yellow-500" />
-                Session Highlights
+                {{ $t('session.sessionHighlights') }}
               </h4>
               <div class="space-y-2">
                 <div 
@@ -1986,15 +1992,16 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
             <!-- No Improvements Message -->
             <div v-else class="text-center p-6 bg-gray-50 dark:bg-gray-800 rounded-xl">
               <UIcon name="i-heroicons-heart" class="w-8 h-8 text-pink-400 mx-auto mb-2" />
-              <p class="text-sm text-gray-600 dark:text-gray-300 font-medium">Solid consistency today!</p>
-              <p class="text-xs text-gray-400">Keep pushing for those PRs next time 💪</p>
+              <UIcon name="i-heroicons-heart" class="w-8 h-8 text-pink-400 mx-auto mb-2" />
+              <p class="text-sm text-gray-600 dark:text-gray-300 font-medium">{{ $t('session.solidConsistency') }}</p>
+              <p class="text-xs text-gray-400">{{ $t('session.keepPushing') }}</p>
             </div>
 
             <!-- Coach Remarks (if any) -->
             <div v-if="coachRemarks" class="p-4 bg-yellow-50 dark:bg-yellow-900/20 rounded-xl border border-yellow-200 dark:border-yellow-800">
               <div class="flex items-center gap-2 mb-2">
                 <UIcon name="i-heroicons-chat-bubble-bottom-center-text" class="w-4 h-4 text-yellow-600" />
-                <h4 class="text-xs font-semibold text-yellow-700 dark:text-yellow-400 uppercase">Coach Notes</h4>
+                <h4 class="text-xs font-semibold text-yellow-700 dark:text-yellow-400 uppercase">{{ $t('session.coachNotes') }}</h4>
               </div>
               <p class="text-sm text-gray-700 dark:text-gray-300">{{ coachRemarks }}</p>
             </div>
@@ -2008,7 +2015,7 @@ const randomMotivation = motivationMessages[Math.floor(Math.random() * motivatio
           <!-- Fixed Footer -->
           <div class="p-4 border-t border-gray-100 dark:border-gray-800 flex-shrink-0">
             <UButton 
-              label="Done" 
+              :label="$t('session.done')" 
               color="primary" 
               size="xl"
               block

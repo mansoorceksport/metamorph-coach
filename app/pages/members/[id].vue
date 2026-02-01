@@ -2,6 +2,7 @@
 const route = useRoute()
 const memberId = computed(() => route.params.id as string)
 const toast = useToast()
+const { t } = useI18n()
 
 interface ScheduleStats {
   completed: number
@@ -118,19 +119,19 @@ onMounted(() => {
       </div>
       <div class="flex gap-2">
         <UButton
-          label="Add Package"
+          :label="$t('memberDetail.addPackage')"
           color="success"
           icon="i-heroicons-plus-circle"
           @click="showAddContract = true"
         />
         <UButton
-          label="Upload Scan"
+          :label="$t('memberDetail.addScan')"
           color="success"
           icon="i-heroicons-document-chart-bar"
           @click="showDigitizer = true"
         />
         <UButton
-          label="Schedule Session"
+          :label="$t('memberDetail.scheduleSession')"
           color="primary"
           icon="i-heroicons-calendar-plus"
           @click="router.push({ path: '/schedule', query: { member: memberId, new: 'true' } })"
@@ -158,7 +159,7 @@ onMounted(() => {
       <UIcon name="i-heroicons-exclamation-triangle" class="w-16 h-16 mx-auto text-red-400 mb-4" />
       <h3 class="text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">Failed to load member</h3>
       <p class="text-gray-500 mb-4">{{ loadError }}</p>
-      <UButton label="Try Again" color="primary" @click="loadMember" />
+      <UButton :label="$t('memberDetail.tryAgain')" color="primary" @click="loadMember" />
     </div>
 
     <!-- Member Content -->
@@ -180,7 +181,7 @@ onMounted(() => {
         <div class="grid grid-cols-3 gap-4">
           <div class="text-center p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
             <p class="text-2xl font-bold text-primary-600">{{ scans.length }}</p>
-            <p class="text-sm text-gray-500">Scans</p>
+            <p class="text-sm text-gray-500">{{ $t('memberDetail.scans') }}</p>
           </div>
           <div class="text-center p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
             <p 
@@ -193,34 +194,34 @@ onMounted(() => {
             >
               {{ member?.remaining_sessions || 0 }}
             </p>
-            <p class="text-sm text-gray-500">Sessions Remaining</p>
+            <p class="text-sm text-gray-500">{{ $t('members.sessions') }} {{ $t('common.left') }}</p>
           </div>
           <div class="text-center p-4 bg-gray-50 dark:bg-slate-800 rounded-lg">
             <p class="text-2xl font-bold text-blue-600">{{ member?.contracts?.length || 0 }}</p>
-            <p class="text-sm text-gray-500">Packages</p>
+            <p class="text-sm text-gray-500">{{ $t('memberDetail.packages') }}</p>
           </div>
         </div>
 
         <!-- Attendance Stats -->
         <div v-if="member?.schedule_stats" class="mt-4 pt-4 border-t border-gray-100 dark:border-gray-800">
-          <p class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Attendance History</p>
+          <p class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">{{ $t('memberDetail.attendanceHistory') }}</p>
           <div class="grid grid-cols-3 gap-3">
             <div class="text-center p-3 bg-emerald-50 dark:bg-emerald-900/20 rounded-lg">
               <p class="text-xl font-bold text-emerald-600">{{ member.schedule_stats.completed }}</p>
-              <p class="text-xs text-gray-500">Completed</p>
+              <p class="text-xs text-gray-500">{{ $t('memberDetail.completed') }}</p>
             </div>
             <div class="text-center p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg">
               <p class="text-xl font-bold text-amber-600">{{ member.schedule_stats.cancelled }}</p>
-              <p class="text-xs text-gray-500">Cancelled</p>
+              <p class="text-xs text-gray-500">{{ $t('memberDetail.cancelled') }}</p>
             </div>
             <div class="text-center p-3 bg-red-50 dark:bg-red-900/20 rounded-lg">
               <p class="text-xl font-bold text-red-600">{{ member.schedule_stats.no_show }}</p>
-              <p class="text-xs text-gray-500">No Show</p>
+              <p class="text-xs text-gray-500">{{ $t('memberDetail.noShow') }}</p>
             </div>
           </div>
           <div v-if="(member.schedule_stats.completed + member.schedule_stats.cancelled + member.schedule_stats.no_show) > 0" class="mt-3">
             <div class="flex items-center justify-between text-sm mb-1">
-              <span class="text-gray-600 dark:text-gray-400">Attendance Rate</span>
+              <span class="text-gray-600 dark:text-gray-400">{{ $t('memberDetail.attendanceRate') }}</span>
               <span class="font-semibold" :class="attendanceRate >= 80 ? 'text-emerald-600' : attendanceRate >= 50 ? 'text-amber-600' : 'text-red-600'">
                 {{ attendanceRate }}%
               </span>
@@ -244,11 +245,11 @@ onMounted(() => {
           <UIcon name="i-heroicons-exclamation-triangle" class="w-8 h-8 text-amber-500" />
         </div>
         <div class="flex-1">
-          <h4 class="font-semibold text-amber-800 dark:text-amber-200">No Active Package</h4>
+          <h4 class="font-semibold text-amber-800 dark:text-amber-200">{{ $t('memberDetail.noPackage') }}</h4>
           <p class="text-sm text-amber-700 dark:text-amber-300">Add a package to start scheduling sessions with this member.</p>
         </div>
         <UButton
-          label="Add Package"
+          :label="$t('memberDetail.addPackage')"
           color="warning"
           icon="i-heroicons-plus"
           @click="showAddContract = true"

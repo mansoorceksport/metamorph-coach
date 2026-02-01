@@ -3,6 +3,7 @@ const { signOut, checkPendingSync, forceSyncBeforeLogout } = useAuth()
 const toast = useToast()
 const { pendingSyncCount, isSyncing, isOnline, forceSyncNow } = useDatabase()
 const focusStore = useFocusStore()
+const { t } = useI18n()
 
 // Sidebar collapse state - persisted in localStorage
 const isSidebarCollapsed = ref(false)
@@ -30,33 +31,35 @@ const showLogoutWarning = ref(false)
 const pendingLogoutCount = ref(0)
 const isForceSyncing = ref(false)
 
-const navItems = [
+// Navigation items with translations
+const navItems = computed(() => [
   {
-    label: 'Agenda',
+    label: t('nav.agenda'),
     to: '/',
     icon: 'i-heroicons-calendar-days'
   },
   {
-    label: 'Schedule',
+    label: t('nav.schedule'),
     to: '/schedule',
     icon: 'i-heroicons-clock'
   },
   {
-    label: 'Members',
+    label: t('nav.members'),
     to: '/members',
     icon: 'i-heroicons-users'
   },
   {
-    label: 'Library',
+    label: t('nav.library'),
     to: '/library',
     icon: 'i-heroicons-book-open'
   },
   {
-    label: 'Settings',
+    label: t('nav.settings'),
     to: '/settings',
     icon: 'i-heroicons-cog-6-tooth'
   }
-]
+])
+
 
 const handleLogout = async () => {
   try {
@@ -228,6 +231,8 @@ const handleForceSync = async () => {
             <span class="text-xs font-medium text-orange-700 dark:text-orange-400">{{ pendingSyncCount }} pending</span>
             <UIcon name="i-heroicons-arrow-path" class="w-3 h-3 text-orange-500" />
           </button>
+          <!-- Language Switcher -->
+          <LanguageSwitcher />
           <UButton
             color="neutral"
             variant="ghost"
@@ -238,6 +243,7 @@ const handleForceSync = async () => {
         </div>
       </div>
     </header>
+
 
     <div class="flex flex-1 overflow-hidden">
       <!-- Desktop Sidebar Navigation (hidden in Focus Mode) -->

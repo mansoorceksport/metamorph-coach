@@ -2,6 +2,8 @@
 import { db } from '~/utils/db'
 import { liveQuery } from 'dexie'
 
+const { t } = useI18n()
+
 // Load schedules from IndexedDB
 const todaysSessions = ref<Array<{
   id: string
@@ -203,9 +205,9 @@ const mockRecentPRs = [
     <div class="space-y-8">
     <!-- Header Section with Action -->
     <div class="flex items-center justify-between">
-      <h1 class="text-3xl font-bold text-gray-900 dark:text-white">Command Center</h1>
+      <h1 class="text-3xl font-bold text-gray-900 dark:text-white">{{ $t('dashboard.title') }}</h1>
       <UButton
-        label="+ New Session"
+        :label="$t('dashboard.newSession')"
         color="primary"
         size="lg"
         icon="i-heroicons-plus"
@@ -215,7 +217,7 @@ const mockRecentPRs = [
 
     <!-- Today's Schedule -->
     <section>
-      <h2 class="text-xl font-semibold mb-4 text-gray-700 dark:text-gray-200">Today's Schedule</h2>
+      <h2 class="text-xl font-semibold mb-4 text-gray-700 dark:text-gray-200">{{ $t('dashboard.todaySchedule') }}</h2>
       
       <!-- Loading State -->
       <div v-if="isLoadingSchedules" class="grid gap-6 md:grid-cols-3">
@@ -229,10 +231,10 @@ const mockRecentPRs = [
       <!-- Empty State -->
       <div v-else-if="todaysSessions.length === 0" class="text-center py-12 bg-gray-50 dark:bg-gray-900/50 rounded-xl border-2 border-dashed border-gray-200 dark:border-gray-700">
         <UIcon name="i-heroicons-calendar-days" class="w-16 h-16 mx-auto text-gray-300 dark:text-gray-600 mb-4" />
-        <h3 class="text-lg font-semibold text-gray-600 dark:text-gray-400 mb-2">No Sessions Today</h3>
-        <p class="text-sm text-gray-500 dark:text-gray-500 mb-4">You have no training sessions scheduled for today.</p>
+        <h3 class="text-lg font-semibold text-gray-600 dark:text-gray-400 mb-2">{{ $t('dashboard.noSessions') }}</h3>
+        <p class="text-sm text-gray-500 dark:text-gray-500 mb-4">{{ $t('dashboard.noSessionsDesc') }}</p>
         <UButton
-          label="Schedule Session"
+          :label="$t('dashboard.scheduleSession')"
           color="primary"
           variant="soft"
           icon="i-heroicons-plus"
@@ -300,21 +302,21 @@ const mockRecentPRs = [
                   color="success" 
                   variant="subtle" 
                   size="xs"
-                  label="Completed"
+                  :label="$t('session.completed')"
                 />
                 <UBadge 
                   v-else-if="session.status === 'in-progress'" 
                   color="info" 
                   variant="subtle" 
                   size="xs"
-                  label="In Progress"
+                  :label="$t('session.inProgress')"
                 />
                 <UBadge 
                   v-else-if="session.status === 'pending'" 
                   color="warning" 
                   variant="subtle" 
                   size="xs"
-                  label="Pending"
+                  :label="$t('session.pending')"
                 />
               </div>
               <UIcon 
@@ -329,7 +331,7 @@ const mockRecentPRs = [
 
     <!-- Analytics Grid -->
     <section>
-       <h2 class="text-xl font-semibold mb-4 text-gray-700 dark:text-gray-200">Member Analytics</h2>
+       <h2 class="text-xl font-semibold mb-4 text-gray-700 dark:text-gray-200">{{ $t('dashboard.memberAnalytics') }}</h2>
        <div class="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
          
          <!-- Rising Stars -->
@@ -338,9 +340,9 @@ const mockRecentPRs = [
               <div>
                 <div class="flex items-center gap-2">
                   <UIcon name="i-heroicons-sparkles" class="w-5 h-5 text-yellow-500" />
-                  <h3 class="font-semibold">Rising Stars</h3>
+                  <h3 class="font-semibold">{{ $t('analytics.risingStars') }}</h3>
                 </div>
-                <p class="text-xs text-slate-400 mt-1">Optimal Recomposition: Highest positive muscle gain and fat loss deltas.</p>
+                <p class="text-xs text-slate-400 mt-1">{{ $t('analytics.risingStarsDesc') }}</p>
               </div>
             </template>
            <!-- Loading State -->
@@ -382,9 +384,9 @@ const mockRecentPRs = [
               <div>
                 <div class="flex items-center gap-2">
                   <UIcon name="i-heroicons-check-badge" class="w-5 h-5 text-green-500" />
-                  <h3 class="font-semibold">Consistent (100%)</h3>
+                  <h3 class="font-semibold">{{ $t('analytics.consistent') }}</h3>
                 </div>
-                <p class="text-xs text-slate-400 mt-1">High Diligence: Top attendance rate with zero missed sessions in 30 days.</p>
+                <p class="text-xs text-slate-400 mt-1">{{ $t('analytics.consistentDesc') }}</p>
               </div>
             </template>
             <ul class="space-y-3">
@@ -410,9 +412,9 @@ const mockRecentPRs = [
               <div>
                 <div class="flex items-center gap-2">
                   <UIcon name="i-heroicons-exclamation-triangle" class="w-5 h-5 text-red-500" />
-                  <h3 class="font-semibold">Intervention Needed</h3>
+                  <h3 class="font-semibold">{{ $t('analytics.interventionNeeded') }}</h3>
                 </div>
-                <p class="text-xs text-slate-400 mt-1">Stalled Progress: High attendance but regressed or plateaued physical metrics.</p>
+                <p class="text-xs text-slate-400 mt-1">{{ $t('analytics.interventionDesc') }}</p>
               </div>
             </template>
             <ul class="space-y-3">

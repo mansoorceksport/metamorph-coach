@@ -1,6 +1,7 @@
 <script setup lang="ts">
 const { getMembers, syncClients } = useDatabase()
 const toast = useToast()
+const { t } = useI18n()
 
 const showAddModal = ref(false)
 const isSyncing = ref(false)
@@ -105,7 +106,7 @@ onMounted(() => {
     <!-- Header Section -->
     <div class="flex items-center justify-between">
       <div class="flex items-center gap-3">
-        <h1 class="text-3xl font-bold">Members</h1>
+        <h1 class="text-3xl font-bold">{{ $t('members.title') }}</h1>
         <UButton
           v-if="isSyncing"
           size="xs"
@@ -118,7 +119,7 @@ onMounted(() => {
       </div>
       <div class="flex gap-2">
         <UButton
-          label="Refresh"
+          :label="$t('members.refresh')"
           color="neutral"
           variant="ghost"
           icon="i-heroicons-arrow-path"
@@ -126,7 +127,7 @@ onMounted(() => {
           @click="refreshMembers"
         />
         <UButton
-          label="+ Add Member"
+          :label="$t('members.addMember')"
           color="primary"
           size="lg"
           icon="i-heroicons-plus"
@@ -139,7 +140,7 @@ onMounted(() => {
     <div class="mb-2">
       <UInput
         v-model="searchQuery"
-        placeholder="Search members by name..."
+        :placeholder="$t('members.searchPlaceholder')"
         icon="i-heroicons-magnifying-glass"
         size="lg"
         class="w-full"
@@ -164,10 +165,10 @@ onMounted(() => {
     <!-- Empty State -->
     <div v-else-if="members.length === 0 && !loading" class="text-center py-12">
       <UIcon name="i-heroicons-users" class="w-16 h-16 mx-auto text-gray-300 mb-4" />
-      <h3 class="text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">No members yet</h3>
-      <p class="text-gray-500 mb-4">Add your first member to get started</p>
+      <h3 class="text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">{{ $t('members.noMembers') }}</h3>
+      <p class="text-gray-500 mb-4">{{ $t('members.noMembersDesc') }}</p>
       <UButton
-        label="Add Member"
+        :label="$t('library.addExercise').replace('Exercise', 'Member')"
         color="primary"
         icon="i-heroicons-plus"
         @click="showAddModal = true"
@@ -177,7 +178,7 @@ onMounted(() => {
     <!-- No Search Results -->
     <div v-else-if="searchQuery && filteredMembers.length === 0" class="text-center py-12">
       <UIcon name="i-heroicons-magnifying-glass" class="w-16 h-16 mx-auto text-gray-300 mb-4" />
-      <h3 class="text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">No members found</h3>
+      <h3 class="text-lg font-medium text-gray-700 dark:text-gray-300 mb-2">{{ $t('members.noSearchResults') }}</h3>
       <p class="text-gray-500">No members match "{{ searchQuery }}"</p>
     </div>
 
@@ -193,7 +194,7 @@ onMounted(() => {
             <div>
               <h3 class="font-semibold text-lg">{{ member.name }}</h3>
               <p class="text-sm text-gray-500 dark:text-gray-400">
-                {{ member.total_sessions || 0 }} sessions
+                {{ member.total_sessions || 0 }} {{ $t('members.sessions') }}
               </p>
             </div>
           </div>
@@ -210,7 +211,7 @@ onMounted(() => {
                   ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
                   : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'"
             >
-              {{ member.remaining_sessions || 0 }} sessions remaining
+              {{ member.remaining_sessions || 0 }} {{ $t('members.sessions') }} {{ $t('common.left') }}
             </span>
           </div>
           
@@ -221,14 +222,14 @@ onMounted(() => {
             </span>
           </div>
           <div v-else class="text-sm text-gray-400 italic">
-            No sessions yet
+            {{ $t('members.noSessionsYet') }}
           </div>
         </div>
 
         <template #footer>
           <UButton
             :to="`/members/${member.id}`"
-            label="View Profile"
+            :label="$t('members.viewProfile')"
             color="primary"
             variant="outline"
             block

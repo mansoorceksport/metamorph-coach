@@ -4,6 +4,7 @@ import { db, type Schedule, type CachedMember } from '~/utils/db'
 const { createScheduleWithSync, deleteScheduleWithSync, getCachedMembers } = useDatabase()
 const router = useRouter()
 const toast = useToast()
+const { t } = useI18n()
 
 // All schedules from database
 const schedules = ref<Schedule[]>([])
@@ -330,11 +331,11 @@ function clearFilters() {
     <!-- Header -->
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
       <div>
-        <h1 class="text-3xl font-bold text-gray-900 dark:text-white">Schedule</h1>
-        <p class="text-gray-500 dark:text-gray-400 mt-1">Manage all your training sessions</p>
+        <h1 class="text-3xl font-bold text-gray-900 dark:text-white">{{ $t('schedule.title') }}</h1>
+        <p class="text-gray-500 dark:text-gray-400 mt-1">{{ $t('schedule.subtitle') }}</p>
       </div>
       <UButton
-        label="+ New Session"
+        :label="$t('schedule.newSession')"
         color="primary"
         size="lg"
         icon="i-heroicons-plus"
@@ -347,7 +348,7 @@ function clearFilters() {
       <div class="flex flex-col sm:flex-row gap-4">
         <!-- Date Filter -->
         <div class="flex-1">
-          <label class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">Filter by Date</label>
+          <label class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">{{ $t('schedule.filterByDate') }}</label>
           <UInput
             v-model="selectedDate"
             type="date"
@@ -358,7 +359,7 @@ function clearFilters() {
         
         <!-- Status Filter -->
         <div class="flex-1">
-          <label class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">Filter by Status</label>
+          <label class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-1 block">{{ $t('schedule.filterByStatus') }}</label>
           <USelectMenu
             v-model="selectedStatus"
             :items="statusOptions"
@@ -371,7 +372,7 @@ function clearFilters() {
         <div class="flex items-end">
           <UButton
             v-if="selectedDate || selectedStatus !== 'all'"
-            label="Clear Filters"
+            :label="$t('schedule.clearFilters')"
             color="neutral"
             variant="ghost"
             icon="i-heroicons-x-mark"
@@ -524,7 +525,7 @@ function clearFilters() {
             <UIcon name="i-heroicons-calendar-plus" class="w-6 h-6 text-primary-600 dark:text-primary-400" />
           </div>
           <div>
-            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">New Training Session</h3>
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ $t('schedule.newSession') }}</h3>
             <p class="text-sm text-gray-500">Schedule a session with a member</p>
           </div>
         </div>
@@ -622,13 +623,13 @@ function clearFilters() {
       <template #footer>
         <div class="flex justify-end gap-3">
           <UButton
-            label="Cancel"
+            :label="$t('common.cancel')"
             color="neutral"
             variant="ghost"
             @click="showNewScheduleModal = false"
           />
           <UButton
-            label="Create Session"
+            :label="$t('schedule.createSession')"
             color="primary"
             icon="i-heroicons-plus"
             :loading="isCreating"
@@ -646,7 +647,7 @@ function clearFilters() {
           <div class="w-16 h-16 mx-auto mb-4 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center">
             <UIcon name="i-heroicons-trash" class="w-8 h-8 text-red-500" />
           </div>
-          <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-2">Delete Session?</h3>
+          <h3 class="text-xl font-bold text-gray-900 dark:text-white mb-2">{{ $t('schedule.deleteSession') }}?</h3>
           <p class="text-gray-500 dark:text-gray-400 mb-6">
             Are you sure you want to delete the session with 
             <span class="font-bold">{{ scheduleToDelete?.member_name }}</span>?
@@ -656,14 +657,14 @@ function clearFilters() {
           
           <div class="flex gap-3 justify-center">
             <UButton
-              label="Cancel"
+              :label="$t('common.cancel')"
               color="neutral"
               variant="ghost"
               :disabled="isDeleting"
               @click="showDeleteModal = false"
             />
             <UButton
-              label="Delete Session"
+              :label="$t('schedule.deleteSession')"
               color="error"
               icon="i-heroicons-trash"
               :loading="isDeleting"

@@ -32,6 +32,7 @@ const emit = defineEmits<{
 
 const focusStore = useFocusStore()
 const { isOnline, pendingSyncCount, isSyncing } = useDatabase()
+const { t } = useI18n()
 
 // Initialize store with exercise IDs
 watchEffect(() => {
@@ -189,11 +190,11 @@ function handleTouchEnd(e: TouchEvent) {
         <!-- Sync Status -->
         <div v-if="!isOnline" class="flex items-center gap-2 px-3 py-1.5 bg-yellow-900/50 rounded-full">
           <UIcon name="i-heroicons-wifi" class="w-4 h-4 text-yellow-400" />
-          <span class="text-xs font-medium text-yellow-400">Offline</span>
+          <span class="text-xs font-medium text-yellow-400">{{ $t('settings.offline') }}</span>
         </div>
         <div v-else-if="isSyncing" class="flex items-center gap-2 px-3 py-1.5 bg-blue-900/50 rounded-full">
           <UIcon name="i-heroicons-arrow-path" class="w-4 h-4 text-blue-400 animate-spin" />
-          <span class="text-xs font-medium text-blue-400">Syncing</span>
+          <span class="text-xs font-medium text-blue-400">{{ $t('sync.syncing') }}</span>
         </div>
         <div v-else-if="pendingSyncCount > 0" class="flex items-center gap-2 px-3 py-1.5 bg-orange-900/50 rounded-full">
           <UIcon name="i-heroicons-cloud-arrow-up" class="w-4 h-4 text-orange-400" />
@@ -201,13 +202,13 @@ function handleTouchEnd(e: TouchEvent) {
         </div>
         <div v-else class="flex items-center gap-2 px-3 py-1.5 bg-green-900/50 rounded-full">
           <UIcon name="i-heroicons-check-circle" class="w-4 h-4 text-green-400" />
-          <span class="text-xs font-medium text-green-400">Synced</span>
+          <span class="text-xs font-medium text-green-400">{{ $t('sync.synced') }}</span>
         </div>
 
         <!-- Overall Progress -->
         <div class="text-right">
           <div class="text-2xl font-bold">{{ overallProgress.percentage }}%</div>
-          <div class="text-xs text-slate-400">{{ overallProgress.completed }}/{{ overallProgress.total }} sets</div>
+          <div class="text-xs text-slate-400">{{ overallProgress.completed }}/{{ overallProgress.total }} {{ $t('session.sets') }}</div>
         </div>
       </div>
     </header>
@@ -219,7 +220,7 @@ function handleTouchEnd(e: TouchEvent) {
         <div class="text-center mb-8">
           <h1 class="text-3xl lg:text-4xl font-bold mb-2">{{ activeExercise.name }}</h1>
           <p class="text-slate-400 text-lg">
-            Target: {{ activeExercise.targetSets }} × {{ activeExercise.targetReps }} reps
+            Target: {{ activeExercise.targetSets }} × {{ activeExercise.targetReps }} {{ $t('session.reps') }}
           </p>
           <div class="mt-4 flex items-center justify-center gap-2">
             <div class="h-2 w-48 bg-slate-800 rounded-full overflow-hidden">
@@ -254,7 +255,7 @@ function handleTouchEnd(e: TouchEvent) {
             <div class="grid grid-cols-2 gap-4 mb-4">
               <!-- Weight Stepper -->
               <div class="text-center">
-                <label class="text-sm text-slate-400 block mb-2">Weight (kg)</label>
+                <label class="text-sm text-slate-400 block mb-2">{{ $t('session.weight') }} (kg)</label>
                 <div class="flex items-center justify-center gap-2">
                   <button 
                     class="w-14 h-14 lg:w-16 lg:h-16 rounded-xl bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-2xl font-bold transition-colors"
@@ -276,7 +277,7 @@ function handleTouchEnd(e: TouchEvent) {
 
               <!-- Reps Stepper -->
               <div class="text-center">
-                <label class="text-sm text-slate-400 block mb-2">Reps</label>
+                <label class="text-sm text-slate-400 block mb-2">{{ $t('session.reps') }}</label>
                 <div class="flex items-center justify-center gap-2">
                   <button 
                     class="w-14 h-14 lg:w-16 lg:h-16 rounded-xl bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-2xl font-bold transition-colors"
@@ -310,7 +311,7 @@ function handleTouchEnd(e: TouchEvent) {
                   :name="set.completed ? 'i-heroicons-check-circle-solid' : 'i-heroicons-check-circle'" 
                   class="w-6 h-6" 
                 />
-                {{ set.completed ? 'Completed!' : 'Mark Done' }}
+                {{ set.completed ? $t('session.completed') : $t('common.submit') }}
               </span>
             </button>
           </div>
@@ -322,7 +323,7 @@ function handleTouchEnd(e: TouchEvent) {
           >
             <span class="flex items-center justify-center gap-2">
               <UIcon name="i-heroicons-plus" class="w-5 h-5" />
-              Add Set
+              {{ $t('session.addSet') }}
             </span>
           </button>
         </div>
@@ -341,7 +342,7 @@ function handleTouchEnd(e: TouchEvent) {
         >
           <span class="flex items-center justify-center gap-2">
             <UIcon name="i-heroicons-chevron-left" class="w-5 h-5" />
-            Previous
+            {{ $t('common.previous') }}
           </span>
         </button>
 
@@ -375,7 +376,7 @@ function handleTouchEnd(e: TouchEvent) {
           @click="focusStore.nextExercise()"
         >
           <span class="flex items-center justify-center gap-2">
-            Next
+            {{ $t('common.next') }}
             <UIcon name="i-heroicons-chevron-right" class="w-5 h-5" />
           </span>
         </button>

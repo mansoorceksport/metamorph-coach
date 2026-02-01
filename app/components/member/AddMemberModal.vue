@@ -9,6 +9,7 @@ const props = defineProps<{
 }>()
 
 const toast = useToast()
+const { t } = useI18n()
 const isSubmitting = ref(false)
 
 // Packages
@@ -165,7 +166,7 @@ watch(() => props.open, (isOpen) => {
             <UIcon name="i-heroicons-user-plus" class="w-6 h-6 text-primary-600" />
           </div>
           <div>
-            <h2 class="text-xl font-bold text-gray-900 dark:text-white">Add New Member</h2>
+            <h2 class="text-xl font-bold text-gray-900 dark:text-white">{{ $t('modals.addMember') }}</h2>
             <p class="text-sm text-gray-500">Create a member with a package</p>
           </div>
         </div>
@@ -225,7 +226,7 @@ watch(() => props.open, (isOpen) => {
           <!-- Actions -->
           <div class="flex gap-3 pt-4">
             <UButton
-              label="Cancel"
+              :label="$t('common.cancel')"
               color="neutral"
               variant="outline"
               class="flex-1"
@@ -233,7 +234,7 @@ watch(() => props.open, (isOpen) => {
             />
             <UButton
               type="submit"
-              label="Add Member"
+              :label="$t('modals.addMember')"
               color="primary"
               class="flex-1"
               :loading="isSubmitting"

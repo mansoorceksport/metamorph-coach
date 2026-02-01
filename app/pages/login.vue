@@ -4,6 +4,7 @@ definePageMeta({
 })
 
 const { signInWithGoogle, loading, error, isAuthenticated } = useAuth()
+const { t } = useI18n()
 const toast = useToast()
 const router = useRouter()
 
@@ -19,8 +20,8 @@ const handleGoogleSignIn = async () => {
   try {
     await signInWithGoogle()
     toast.add({
-      title: 'Success!',
-      description: 'You have been signed in successfully.',
+      title: t('login.successTitle'),
+      description: t('login.successDesc'),
       color: 'success',
       icon: 'i-heroicons-check-circle'
     })
@@ -29,8 +30,8 @@ const handleGoogleSignIn = async () => {
     await router.push('/hydrating')
   } catch (err: any) {
     toast.add({
-      title: 'Sign In Failed',
-      description: err.message || 'Failed to sign in with Google. Please try again.',
+      title: t('login.failedTitle'),
+      description: err.message || t('login.failedDesc') || 'Failed to sign in with Google. Please try again.',
       color: 'error',
       icon: 'i-heroicons-exclamation-circle'
     })
@@ -70,17 +71,17 @@ const handleGoogleSignIn = async () => {
               Metamorph
             </h1>
             <p class="mt-2 text-slate-400 text-xs tracking-[0.3em] uppercase opacity-80">
-              Intelligence & Transformation
+              {{ $t('login.tagline') }}
             </p>
           </div>
 
           <!-- Header -->
           <div class="text-center space-y-2">
             <h2 class="text-xl font-bold text-white">
-              Coach Dashboard
+              {{ $t('login.dashboard') }}
             </h2>
             <p class="text-slate-400 text-sm">
-              Secure access for HOM Professional Coaches
+              {{ $t('login.subtitle') }}
             </p>
           </div>
 
@@ -109,13 +110,13 @@ const handleGoogleSignIn = async () => {
             <template #leading>
               <UIcon name="i-simple-icons-google" class="w-5 h-5 text-slate-900" />
             </template>
-            {{ loading ? 'Signing in...' : 'Sign in with Google' }}
+            {{ loading ? $t('login.signingIn') : $t('login.signInGoogle') }}
           </UButton>
 
           <!-- Footer -->
           <div class="text-center pt-4 border-t border-slate-800">
             <p class="text-xs text-slate-500">
-              Powered by Metamorph Intelligence
+              {{ $t('login.poweredBy') }}
             </p>
           </div>
         </div>

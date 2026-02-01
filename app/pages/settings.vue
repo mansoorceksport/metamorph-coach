@@ -1,6 +1,7 @@
 <script setup lang="ts">
 const { pendingSyncCount, isSyncing, isOnline, forceSyncNow, getDeadLetterItems } = useDatabase()
 const toast = useToast()
+const { t } = useI18n()
 
 // Track dead-letter (failed) items count
 const deadLetterCount = ref(0)
@@ -24,7 +25,7 @@ const handleForceSync = async () => {
   
   try {
     toast.add({
-      title: 'Syncing...',
+      title: t('sync.syncing'),
       icon: 'i-heroicons-arrow-path',
       color: 'info'
     })
@@ -36,28 +37,28 @@ const handleForceSync = async () => {
     
     if (result.success > 0) {
       toast.add({
-        title: 'Sync Complete',
-        description: `${result.success} items synced successfully${result.reset > 0 ? ` (${result.reset} retried)` : ''}`,
+        title: t('sync.syncComplete'),
+        description: t('sync.itemsSynced', { count: result.success }),
         icon: 'i-heroicons-check-circle',
         color: 'success'
       })
     } else if (result.failed > 0) {
       toast.add({
-        title: 'Sync Issues',
-        description: `${result.failed} items failed to sync`,
+        title: t('sync.syncIssues'),
+        description: t('sync.itemsFailedSync', { count: result.failed }),
         icon: 'i-heroicons-exclamation-triangle',
         color: 'warning'
       })
     } else {
       toast.add({
-        title: 'Nothing to sync',
+        title: t('sync.nothingToSync'),
         icon: 'i-heroicons-check',
         color: 'neutral'
       })
     }
   } catch (error: any) {
     toast.add({
-      title: 'Sync failed',
+      title: t('sync.syncFailed'),
       description: error.message,
       color: 'error'
     })
@@ -69,8 +70,8 @@ const handleForceSync = async () => {
   <div class="space-y-6">
     <!-- Header -->
     <div>
-      <h1 class="text-3xl font-bold text-gray-900 dark:text-white">Settings</h1>
-      <p class="text-gray-500 dark:text-gray-400 mt-1">Manage your app settings and sync data</p>
+      <h1 class="text-3xl font-bold text-gray-900 dark:text-white">{{ $t('settings.title') }}</h1>
+      <p class="text-gray-500 dark:text-gray-400 mt-1">{{ $t('settings.subtitle') }}</p>
     </div>
 
     <!-- Sync Settings Section -->
@@ -81,8 +82,8 @@ const handleForceSync = async () => {
             <UIcon name="i-heroicons-cloud-arrow-up" class="w-6 h-6 text-blue-600 dark:text-blue-400" />
           </div>
           <div>
-            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Data Sync</h3>
-            <p class="text-sm text-gray-500">Sync your offline data with the server</p>
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ $t('settings.dataSync') }}</h3>
+            <p class="text-sm text-gray-500">{{ $t('settings.dataSyncDesc') }}</p>
           </div>
         </div>
       </template>
@@ -121,16 +122,16 @@ const handleForceSync = async () => {
             </div>
             <div>
               <p class="font-medium text-gray-900 dark:text-white">
-                {{ !isOnline ? 'Offline' : totalQueueCount > 0 ? `${totalQueueCount} Items` : 'All Synced' }}
+                {{ !isOnline ? $t('settings.offline') : totalQueueCount > 0 ? $t('settings.itemsPending', { count: totalQueueCount }) : $t('settings.allSynced') }}
               </p>
               <p class="text-sm text-gray-500">
                 {{ !isOnline 
-                  ? 'Connect to internet to sync' 
+                  ? $t('settings.connectToInternet') 
                   : deadLetterCount > 0 
-                    ? `${deadLetterCount} failed, ${pendingSyncCount} pending`
+                    ? $t('settings.failedPending', { failed: deadLetterCount, pending: pendingSyncCount })
                     : pendingSyncCount > 0 
-                      ? 'Items waiting to be synced'
-                      : 'Your data is up to date' 
+                      ? $t('settings.waitingToSync')
+                      : $t('settings.dataUpToDate') 
                 }}
               </p>
             </div>
@@ -138,18 +139,18 @@ const handleForceSync = async () => {
           <UBadge 
             :color="!isOnline ? 'warning' : deadLetterCount > 0 ? 'error' : totalQueueCount > 0 ? 'warning' : 'success'" 
             variant="subtle"
-            :label="!isOnline ? 'Offline' : deadLetterCount > 0 ? 'Failed' : totalQueueCount > 0 ? 'Pending' : 'Synced'"
+            :label="!isOnline ? $t('settings.offline') : deadLetterCount > 0 ? $t('common.failed') : totalQueueCount > 0 ? $t('common.pending') : $t('common.synced')"
           />
         </div>
 
         <!-- Sync Button -->
         <div class="flex items-center justify-between p-4 border border-gray-200 dark:border-gray-700 rounded-xl">
           <div>
-            <p class="font-medium text-gray-900 dark:text-white">Sync Pending Changes</p>
-            <p class="text-sm text-gray-500">Push all pending local changes to the server</p>
+            <p class="font-medium text-gray-900 dark:text-white">{{ $t('settings.syncPending') }}</p>
+            <p class="text-sm text-gray-500">{{ $t('settings.syncPendingDesc') }}</p>
           </div>
           <UButton
-            label="Sync Now"
+            :label="$t('settings.syncNow')"
             color="primary"
             icon="i-heroicons-arrow-path"
             :loading="isSyncing"
@@ -163,8 +164,8 @@ const handleForceSync = async () => {
           color="info"
           variant="soft"
           icon="i-heroicons-information-circle"
-          title="About Data Sync"
-          description="Your data is saved locally first for offline access. Changes sync to the server automatically when you're online. Use 'Sync Now' to retry failed sync attempts."
+          :title="$t('settings.aboutSync')"
+          :description="$t('settings.aboutSyncDesc')"
         />
       </div>
     </UCard>
