@@ -14,6 +14,9 @@ const isSaving = ref(false)
 const isDeleting = ref(false)
 const isEditing = ref(false)
 
+// Social Share
+const showShareModal = ref(false)
+
 // Editable form data - all fields except AI analysis
 const editForm = ref({
   // Core Metrics
@@ -296,6 +299,15 @@ onMounted(() => {
           icon="i-heroicons-trash"
           :loading="isDeleting"
           @click="deleteScan"
+        />
+        <!-- Share Button -->
+        <UButton
+          v-if="!isEditing && scan"
+          icon="i-heroicons-share"
+          color="primary"
+          variant="soft"
+          label="Share"
+          @click="showShareModal = true"
         />
       </div>
     </div>
@@ -783,5 +795,20 @@ onMounted(() => {
         </UCard>
       </div>
     </div>
+
+    <!-- Social Share Modal -->
+    <SocialShareModal
+      v-if="scan"
+      v-model:show="showShareModal"
+      type="scan"
+      :scan-data="{
+        weight: scan.weight || 0,
+        smm: scan.smm || 0,
+        bodyFat: scan.pbf || 0,
+        bmi: scan.bmi || 0,
+        memberName: member?.name
+      }"
+      @close="showShareModal = false"
+    />
   </div>
 </template>

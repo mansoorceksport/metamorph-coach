@@ -727,6 +727,9 @@ async function removeExerciseFromPlan(plannedExerciseId: string) {
 const showConfirmModal = ref(false)
 const showRemarksModal = ref(false)
 const showSummaryModal = ref(false)
+
+// Social Share
+const showShareModal = ref(false)
 const coachRemarks = ref('')
 
 // Computed session improvements
@@ -1084,6 +1087,16 @@ onMounted(() => {
           <UIcon name="i-heroicons-check-badge" class="w-16 h-16 mx-auto mb-3" />
           <h2 class="text-2xl font-bold mb-2">{{ $t('session.sessionComplete') }}</h2>
           <p class="text-green-100">{{ $t('session.sessionCompleteDesc') || 'This workout has been successfully finished.' }}</p>
+          
+          <!-- Share to Instagram Button -->
+          <UButton
+            class="mt-4"
+            color="neutral"
+            variant="solid"
+            icon="i-heroicons-share"
+            label="Share to Instagram"
+            @click="showShareModal = true"
+          />
         </div>
 
         <!-- Session Summary Card -->
@@ -2025,6 +2038,21 @@ onMounted(() => {
         </div>
       </template>
     </UModal>
+
+    <!-- Social Share Modal -->
+    <SocialShareModal
+      v-model:show="showShareModal"
+      type="session"
+      :session-data="{
+        memberName: session.memberName,
+        focusArea: session.goal,
+        setsCompleted: overallProgress.completed,
+        exerciseCount: exercises.length,
+        newPRs: sessionImprovements.filter(i => i.type === 'pb').length,
+        motivationQuote: randomMotivation
+      }"
+      @close="showShareModal = false"
+    />
   </div>
 </template>
 

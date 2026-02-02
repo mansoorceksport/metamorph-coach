@@ -3,6 +3,7 @@ const route = useRoute()
 const memberId = computed(() => route.params.id as string)
 const toast = useToast()
 const { t } = useI18n()
+const { user } = useAuth()
 
 interface ScheduleStats {
   completed: number
@@ -19,6 +20,11 @@ interface MemberDetails {
   schedule_stats?: ScheduleStats
 }
 
+interface VolumePoint {
+  date: string
+  total_volume: number
+}
+
 // Member data
 const member = ref<MemberDetails | null>(null)
 const isLoading = ref(true)
@@ -31,6 +37,11 @@ const showAddContract = ref(false)
 const selectedScan = ref<any>(null)
 const showScanDetail = ref(false)
 const router = useRouter()
+
+// Share Progress
+const showShareModal = ref(false)
+const volumeData = ref<VolumePoint[]>([])
+const totalVolume = ref(0)
 
 function openScanDetail(scan: any) {
   // Navigate to scan detail page
@@ -97,9 +108,48 @@ const attendanceRate = computed(() => {
   return Math.round((stats.completed / total) * 100)
 })
 
+// Load volume history for sharing
+async function loadVolumeHistory() {
+  const token = useCookie('metamorph-token')
+  try {
+    const data = await $fetch<{ volumes: VolumePoint[] }>(
+      `/api/v1/pro/members/${memberId.value}/volume-history`,
+      { headers: { Authorization: `Bearer ${token.value}` } }
+    )
+    volumeData.value = data.volumes || []
+    totalVolume.value = volumeData.value.reduce((sum, v) => sum + v.total_volume, 0)
+  } catch (error) {
+    console.warn('Failed to load volume history:', error)
+  }
+}
+
+// Coach name from auth
+const coachName = computed(() => user.value?.displayName || 'Coach')
+
+// Progress share data
+const progressShareData = computed(() => {
+  if (!member.value || scans.value.length < 2) return null
+  return {
+    memberName: member.value.name,
+    coachName: coachName.value,
+    scans: scans.value.map(s => ({
+      id: s.id || s._id,
+      weight: s.weight,
+      pbf: s.pbf,
+      smm: s.smm,
+      test_date_time: s.test_date_time
+    })),
+    sessionsCompleted: member.value.schedule_stats?.completed || 0,
+    attendanceRate: attendanceRate.value,
+    volumeData: volumeData.value,
+    totalVolume: totalVolume.value
+  }
+})
+
 onMounted(() => {
   loadMember()
   loadScans()
+  loadVolumeHistory()
 })
 </script>
 
@@ -118,6 +168,14 @@ onMounted(() => {
         <h1 class="text-3xl font-bold">Member Profile</h1>
       </div>
       <div class="flex gap-2">
+        <UButton
+          v-if="scans.length >= 2"
+          label="Share Progress"
+          color="secondary"
+          variant="soft"
+          icon="i-heroicons-share"
+          @click="showShareModal = true"
+        />
         <UButton
           :label="$t('memberDetail.addPackage')"
           color="success"
@@ -351,6 +409,15 @@ onMounted(() => {
       :scan="selectedScan"
       :member-name="member?.name"
       @close="showScanDetail = false"
+    />
+
+    <!-- Share Progress Modal -->
+    <SocialShareModal
+      v-if="progressShareData"
+      v-model:show="showShareModal"
+      type="progress"
+      :progress-data="progressShareData"
+      @close="showShareModal = false"
     />
   </div>
 </template>
